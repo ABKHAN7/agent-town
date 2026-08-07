@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -820,13 +821,16 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
+        # Strip any query string (?debug=1 and the like, e.g. from browser
+        # extensions) before matching routes, so an extra ?param doesn't 404.
+        path = urllib.parse.urlsplit(self.path).path
+        if path in ("/", "/index.html"):
             try:
                 with open(os.path.join(HERE, "index.html"), "rb") as f:
                     return self._send(200, f.read(), "text/html; charset=utf-8")
             except OSError:
                 return self._send(500, b"index.html missing", "text/plain")
-        if self.path == "/state":
+        if path == "/state":
             with LOCK:
                 snap = json.loads(json.dumps(STATE))
             for n in DESKS:
@@ -840,15 +844,15 @@ class Handler(BaseHTTPRequestHandler):
                                                "base": BASE, "odoo_version": ODOO_VERSION,
                                                "voice_ready": voice_ready(),
                                                "now": time.time()}))
-        if self.path == "/branches":
+        if path == "/branches":
             names = list_branches()
             # pre-checked by default - the user usually wants both base and stage
             return self._send(200, json.dumps({"branches": names,
                                                "default": [b for b in (BASE, "stage") if b in names]}))
-        if self.path == "/modules":
+        if path == "/modules":
             return self._send(200, json.dumps({"modules": list_modules()}))
-        if self.path.startswith("/diff/"):
-            n = os.path.basename(self.path[len("/diff/"):])
+        if path.startswith("/diff/"):
+            n = os.path.basename(path[len("/diff/"):])
             if n not in STATE:
                 return self._send(404, b"unknown desk", "text/plain")
             rc, out = git(["diff", "--stat", "HEAD"], cwd=desk_path(n))
@@ -857,8 +861,8 @@ class Handler(BaseHTTPRequestHandler):
             body = out + ("\n=== new files ===\n" + untracked if untracked.strip() else "") \
                    + "\n\n" + out2
             return self._send(200, body.encode("utf-8"), "text/plain; charset=utf-8")
-        if self.path.startswith("/reports/"):
-            fn = os.path.basename(self.path[len("/reports/"):])
+        if path.startswith("/reports/"):
+            fn = os.path.basename(path[len("/reports/"):])
             try:
                 with open(os.path.join(REPORTS, fn), "rb") as f:
                     return self._send(200, f.read(), "text/plain; charset=utf-8")
@@ -867,6 +871,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, b"nope", "text/plain")
 
     def do_POST(self):
+        path = urllib.parse.urlsplit(self.path).path
         n = int(self.headers.get("Content-Length") or 0)
         if n > 28 * 1024 * 1024:  # base64 is ~33% bigger, margin for the 20MB file cap
             self.close_connection = True  # skip reading the rest of the body - otherwise
@@ -876,7 +881,7 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return self._send(400, json.dumps({"error": "bad json"}))
 
-        if self.path == "/discard":
+        if path == "/discard":
             desk = body.get("agent")
             if desk not in STATE:
                 return self._send(400, json.dumps({"error": "unknown desk"}))
@@ -887,7 +892,7 @@ class Handler(BaseHTTPRequestHandler):
             set_(desk, **blank(desk))
             return self._send(200, json.dumps({"ok": True}))
 
-        if self.path == "/review":
+        if path == "/review":
             desk = body.get("agent")
             if desk not in DESKS:
                 return self._send(400, json.dumps({"error": "unknown desk"}))
@@ -898,7 +903,7 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=review_desk, args=(desk,), daemon=True).start()
             return self._send(200, json.dumps({"ok": True}))
 
-        if self.path == "/ship":
+        if path == "/ship":
             desk = body.get("agent")
             branches = body.get("branches") or [body.get("branch") or BASE]
             msg = (body.get("message") or "").strip()
@@ -918,7 +923,7 @@ class Handler(BaseHTTPRequestHandler):
                  detail=detail, output=detail)
             return self._send(200, json.dumps({"ok": True, "detail": detail}))
 
-        if self.path == "/stop":
+        if path == "/stop":
             desk = body.get("agent")
             if desk not in STATE:
                 return self._send(400, json.dumps({"error": "unknown desk"}))
@@ -930,7 +935,7 @@ class Handler(BaseHTTPRequestHandler):
             proc.terminate()
             return self._send(200, json.dumps({"ok": True}))
 
-        if self.path == "/continue":
+        if path == "/continue":
             desk = body.get("agent")
             task = (body.get("task") or "").strip()
             attachments = body.get("attachments") or []
@@ -949,7 +954,7 @@ class Handler(BaseHTTPRequestHandler):
                               daemon=True).start()
             return self._send(200, json.dumps({"ok": True}))
 
-        if self.path == "/upload":
+        if path == "/upload":
             filename = body.get("filename") or ""
             data_b64 = body.get("data") or ""
             if not data_b64:
@@ -960,7 +965,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps({"ok": True, "path": result,
                                                "filename": os.path.basename(result)}))
 
-        if self.path == "/transcribe":
+        if path == "/transcribe":
             data_b64 = body.get("data") or ""
             if not data_b64:
                 return self._send(400, json.dumps({"error": "audio data is empty"}))
@@ -981,20 +986,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, json.dumps({"error": text}))
             return self._send(200, json.dumps({"ok": True, "text": translate_to_english(text)}))
 
-        if self.path == "/rename":
+        if path == "/rename":
             ok, result = rename_agent(body.get("agent"), body.get("name"))
             if not ok:
                 return self._send(400, json.dumps({"error": result}))
             return self._send(200, json.dumps({"ok": True, "name": result}))
 
-        if self.path == "/suggest-module":
+        if path == "/suggest-module":
             task = (body.get("task") or "").strip()
             if not task:
                 return self._send(400, json.dumps({"error": "write a task first"}))
             guess, why = suggest_module(task)
             return self._send(200, json.dumps({"module": guess, "reason": why}))
 
-        if self.path != "/run":
+        if path != "/run":
             return self._send(404, b"nope", "text/plain")
 
         task = (body.get("task") or "").strip()
