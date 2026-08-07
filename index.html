@@ -397,6 +397,37 @@ input:focus,select:focus{outline:none;border-color:var(--accent);
   0%{transform:translate(0,0) rotate(0deg);opacity:1}
   100%{transform:translate(var(--dx),var(--dy)) rotate(var(--rot));opacity:0}
 }
+
+/* ---------- responsive: tablet ---------- */
+@media(max-width:760px){
+  .grid{grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:58px 16px}
+  .urgentgrid{grid-template-columns:repeat(auto-fit,minmax(168px,220px))}
+  /* desk furniture takes the column width - fixed px overflowed a narrow cell */
+  .table{width:100%;max-width:196px}
+  .taskline{width:100%;max-width:210px}
+  .bubble{width:min(250px,72vw)}
+  #plog{height:150px}
+  #pout pre{max-height:240px}
+}
+
+/* ---------- responsive: phone ---------- */
+@media(max-width:520px){
+  body{padding:8px}
+  /* office side padding shrinks - .wall and .urgentroom negative margins must match it */
+  #office{padding:0 10px 18px}
+  .wall{margin:0 -10px 6px;height:auto;min-height:52px;padding:8px 12px;gap:8px;flex-wrap:wrap}
+  .urgentroom{margin:0 -10px 14px;padding:12px 10px 16px}
+  .urgentgrid{grid-template-columns:1fr;gap:56px 16px}
+  .grid{grid-template-columns:1fr;gap:56px 16px}
+  .floorwrap{padding-top:56px;gap:14px}  /* headroom for the speech bubbles - do not shrink much */
+  #task{min-width:0}
+  .taskside{flex-direction:row;flex-wrap:wrap}
+  .assign{flex-wrap:wrap}
+  .assign input{min-width:0}
+  button{padding:10px 16px}
+  #toasts{left:8px;right:8px;top:8px;max-width:none}
+  #pmeta{margin-left:0;width:100%}
+}
 </style>
 </head>
 <body>

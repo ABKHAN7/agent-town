@@ -263,6 +263,19 @@ def desk_dirty(name):
     return rc == 0 and bool(out.strip())
 
 
+def desk_unpushed(name):
+    """Committed work on this desk that never reached any origin branch.
+
+    A half-finished ship (commit done, cherry-pick failed) leaves the worktree
+    clean with the commit stranded on fleet/<desk>. Without this, the desk
+    looks free and the work is silently lost."""
+    path = desk_path(name)
+    if not os.path.isdir(path):
+        return False
+    rc, out = git(["rev-list", "--count", "HEAD", "--not", "--remotes=origin"], cwd=path)
+    return rc == 0 and out.strip() not in ("", "0")
+
+
 # The UI polls every 800ms; running git status every time is wasteful since
 # the count only changes when the agent writes something. A 3s cache is fine.
 _CHANGED_TTL = 3.0
@@ -831,7 +844,7 @@ def free_desk(urgent=False):
     with LOCK:
         for n in pool:
             if STATE[n]["status"] in ("empty", "done", "error", "stopped"):
-                if not desk_dirty(n):
+                if not desk_dirty(n) and not desk_unpushed(n):
                     return n
     return None
 
@@ -923,15 +936,18 @@ def ship_desk(desk, branches, message):
     path = desk_path(desk)
     if not os.path.isdir(path):
         return False, "this desk's worktree doesn't exist"
-    if not desk_dirty(desk):
+    # A previous ship can stop half way (commit went through, then a
+    # cherry-pick failed): the worktree is clean but the commit never landed
+    # on a branch. Don't commit again in that case - ship what HEAD already has.
+    if desk_dirty(desk):
+        rc, out = git(["add", "-A"], cwd=path)
+        if rc:
+            return False, last_line(out, "git add failed")
+        rc, out = git(["commit", "-m", message], cwd=path)
+        if rc:
+            return False, last_line(out, "git commit failed")
+    elif not desk_unpushed(desk):
         return False, "no changes on this desk"
-
-    rc, out = git(["add", "-A"], cwd=path)
-    if rc:
-        return False, last_line(out, "git add failed")
-    rc, out = git(["commit", "-m", message], cwd=path)
-    if rc:
-        return False, last_line(out, "git commit failed")
     rc, sha = git(["rev-parse", "HEAD"], cwd=path)
     sha = sha.strip()
 
@@ -1246,7 +1262,7 @@ class Handler(BaseHTTPRequestHandler):
                 {"error": "urgent flag doesn't match the chosen desk"}))
         if STATE[desk]["status"] in ("seated", "thinking", "working"):
             return self._send(409, json.dumps({"error": "this desk is already busy"}))
-        if desk_dirty(desk):
+        if desk_dirty(desk) or desk_unpushed(desk):
             return self._send(409, json.dumps(
                 {"error": "%s still has unreviewed work - merge or discard it first" % desk}))
         threading.Thread(target=run_agent, args=(desk, ttype, task),
