@@ -390,6 +390,40 @@ def desk_diff_json(desk):
     return files
 
 
+def default_commit_message(desk):
+    """Descriptive fallback commit message for when the Push box is left
+    empty - task text plus what actually changed (from `git diff --stat`),
+    not just a static "change: <task>" label. No AI call - git already
+    knows exactly what changed, this just reads it.
+
+    Git UIs (odoo.sh included) only show a commit's first line inline -
+    the rest is body text you only see on hover/expand. So when there's no
+    task text to describe the work (e.g. a direct in-browser file edit,
+    never "Assign"-ed), the changed file names go straight into that first
+    line too, not just the body - otherwise the list view shows a useless
+    bare "Change / Update" with the real info hidden behind a hover."""
+    ttype = STATE[desk]["ttype"] or "change"
+    task = (STATE[desk]["task"] or "").strip()
+    label = TASK_TYPES.get(ttype, {}).get("label", ttype)
+    root = desk_path(desk)
+    rc, stat = git(["diff", "--stat", "HEAD"], cwd=root)
+    changed = [l.split("|")[0].strip() for l in stat.splitlines() if "|" in l] if rc == 0 else []
+    rc2, untracked = git(["ls-files", "--others", "--exclude-standard"], cwd=root)
+    added = [l.strip() for l in untracked.splitlines() if l.strip()] if rc2 == 0 else []
+    files = changed + added
+    if task:
+        subject = "%s: %s" % (label, task[:80])
+    elif files:
+        preview = ", ".join(files[:3]) + (" +%d more" % (len(files) - 3) if len(files) > 3 else "")
+        subject = "%s: %s" % (label, preview)
+    else:
+        subject = label
+    if not files:
+        return subject
+    preview = ", ".join(files[:6]) + (" +%d more" % (len(files) - 6) if len(files) > 6 else "")
+    return "%s\n\n%d file(s) changed: %s" % (subject, len(files), preview)
+
+
 def ensure_worktree(name):
     """Prepare the desk's worktree, reset to BASE. Returns (ok, message)."""
     path = desk_path(name)
@@ -997,6 +1031,11 @@ class Handler(BaseHTTPRequestHandler):
             if n not in STATE:
                 return self._send(404, b"unknown desk", "text/plain")
             return self._send(200, json.dumps({"files": desk_diff_json(n)}))
+        if path.startswith("/commit-message/"):
+            n = os.path.basename(path[len("/commit-message/"):])
+            if n not in DESKS:
+                return self._send(404, b"unknown desk", "text/plain")
+            return self._send(200, json.dumps({"message": default_commit_message(n)}))
         if path.startswith("/files/"):
             n = os.path.basename(path[len("/files/"):])
             if n not in DESKS:
@@ -1065,7 +1104,7 @@ class Handler(BaseHTTPRequestHandler):
             if STATE[SHIPPER]["reviewed"] != desk:
                 return self._send(409, json.dumps({"error": "run a review on this desk first"}))
             if not msg:
-                msg = "%s: %s" % (STATE[desk]["ttype"] or "change", STATE[desk]["task"][:100])
+                msg = default_commit_message(desk)
             ok, detail = ship_desk(desk, branches, msg)
             if not ok:
                 return self._send(409, json.dumps({"error": detail}))
@@ -1415,6 +1454,38 @@ def selftest():
     # a desk with no worktree yet (git ls-files fails with "No such file or
     # directory") must not treat that OSError string as a list of filenames
     assert desk_diff_json("desk-nonexistent-worktree") == []
+
+    # --- descriptive default commit message (git diff --stat, no AI call) ---
+    _orig_task, _orig_ttype = STATE["desk-1"]["task"], STATE["desk-1"]["ttype"]
+    STATE["desk-1"]["task"], STATE["desk-1"]["ttype"] = "add attendance summary", "feature"
+    try:
+        msg = default_commit_message("desk-1")
+        assert msg.startswith("New feature: add attendance summary") or "add attendance summary" in msg
+        assert "file(s) changed" not in msg, "a clean worktree shouldn't claim files changed"
+        _sf2 = os.path.join(desk_path("desk-1"), "selftest_commitmsg.txt")
+        with open(_sf2, "w") as f:
+            f.write("x\n")
+        try:
+            msg2 = default_commit_message("desk-1")
+            assert "1 file(s) changed" in msg2 and "selftest_commitmsg.txt" in msg2
+        finally:
+            os.remove(_sf2)
+
+        # direct in-browser file edit, never "Assign"-ed -> no task text at
+        # all. This exact combo used to leave the subject line as a bare
+        # "New feature" with the real info hidden in the hover-only body.
+        STATE["desk-1"]["task"] = ""
+        _sf3 = os.path.join(desk_path("desk-1"), "selftest_notask.txt")
+        with open(_sf3, "w") as f:
+            f.write("x\n")
+        try:
+            msg3 = default_commit_message("desk-1")
+            assert "selftest_notask.txt" in msg3.splitlines()[0], \
+                "with no task text, the changed file name is the only useful subject-line content"
+        finally:
+            os.remove(_sf3)
+    finally:
+        STATE["desk-1"]["task"], STATE["desk-1"]["ttype"] = _orig_task, _orig_ttype
 
     # --- desk names + rename persistence ---
     assert set(DEFAULT_NAMES) == set(DESKS)

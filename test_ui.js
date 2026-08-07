@@ -49,7 +49,8 @@ const ctx = {
   fetch: async () => ({ok: true, json: async () => state}),
   localStorage: {getItem: k => store[k] || null, setItem: (k, v) => { store[k] = v; }},
   setInterval: () => 0, setTimeout: () => 0, clearTimeout(){}, console,
-  window: {open(){}}, navigator: {mediaDevices: null}, confirm: () => false,
+  window: {open(){}}, navigator: {mediaDevices: null, clipboard: {writeText: async () => {}}},
+  confirm: () => false, addEventListener(){}, removeEventListener(){},
   Date, Math, JSON, String, Object,
 };
 ctx.window = ctx;
