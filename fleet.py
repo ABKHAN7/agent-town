@@ -44,13 +44,13 @@ ODOO_STANDARDS = (
     "cr.execute(), no base.group_user, no hardcoded user/group assignments)."
 ).format(v=ODOO_VERSION)
 
-DESKS = ["desk-1", "desk-2", "desk-3", "desk-4", "desk-5", "desk-6", "urgent-1", "urgent-2"]
+DESKS = ["desk-1", "desk-2", "desk-3", "desk-4", "desk-5", "urgent-1", "urgent-2"]
 # urgent-1/2 have their own "room" - always kept empty so real urgent work
 # never has to queue behind normal work. Fast model, AI triage skipped too.
 URGENT = {"urgent-1", "urgent-2"}
 DEFAULT_NAMES = {
     "desk-1": "Byte", "desk-2": "Cortex", "desk-3": "Vector",
-    "desk-4": "Nova", "desk-5": "Quark", "desk-6": "Flux",
+    "desk-4": "Nova", "desk-5": "Quark",
     "urgent-1": "Blitz", "urgent-2": "Siren",
 }
 NAMES_FILE = os.path.join(HERE, "names.json")
@@ -443,7 +443,9 @@ _BRANCH_TTL = 30.0
 _branch_cache = [0.0, []]
 
 
-def list_branches():
+def _raw_branches():
+    """All remote branches (including main/master), deduped. One cached git
+    call shared by both list_branches() and list_all_branches() below."""
     now = time.time()
     if now - _branch_cache[0] < _BRANCH_TTL and _branch_cache[1]:
         return _branch_cache[1]
@@ -452,11 +454,23 @@ def list_branches():
     names = []
     for line in out.splitlines():
         b = line.strip()
-        if not b or b == "HEAD" or b in ("main", "master") or b in names:
+        if not b or b == "HEAD" or b in names:
             continue
         names.append(b)
     _branch_cache[0], _branch_cache[1] = now, names
     return names
+
+
+def list_branches():
+    """Push-target branches - excludes main/master, since ship_desk() refuses
+    to push straight to either of those."""
+    return [b for b in _raw_branches() if b not in ("main", "master")]
+
+
+def list_all_branches():
+    """Every branch, including main/master - used for the base-branch picker,
+    where starting new work from main is perfectly reasonable."""
+    return _raw_branches()
 
 
 _MODULE_TTL = 30.0
@@ -854,7 +868,10 @@ class Handler(BaseHTTPRequestHandler):
             names = list_branches()
             # pre-checked by default - the user usually wants both base and stage
             return self._send(200, json.dumps({"branches": names,
-                                               "default": [b for b in (BASE, "stage") if b in names]}))
+                                               "default": list(dict.fromkeys(
+                                                   b for b in (BASE, "stage") if b in names))}))
+        if path == "/base-branches":
+            return self._send(200, json.dumps({"branches": list_all_branches(), "base": BASE}))
         if path == "/modules":
             return self._send(200, json.dumps({"modules": list_modules()}))
         if path.startswith("/diff/"):
@@ -877,6 +894,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, b"nope", "text/plain")
 
     def do_POST(self):
+        global BASE
         path = urllib.parse.urlsplit(self.path).path
         n = int(self.headers.get("Content-Length") or 0)
         if n > 28 * 1024 * 1024:  # base64 is ~33% bigger, margin for the 20MB file cap
@@ -998,6 +1016,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, json.dumps({"error": result}))
             return self._send(200, json.dumps({"ok": True, "name": result}))
 
+        if path == "/base":
+            branch = (body.get("branch") or "").strip()
+            if not branch:
+                return self._send(400, json.dumps({"error": "choose a branch"}))
+            if branch not in list_all_branches():
+                return self._send(400, json.dumps({"error": "no branch named %s on origin" % branch}))
+            BASE = branch
+            return self._send(200, json.dumps({"ok": True, "base": BASE}))
+
         if path == "/suggest-module":
             task = (body.get("task") or "").strip()
             if not task:
@@ -1102,6 +1129,10 @@ def selftest():
     assert "main" not in bl and "master" not in bl, "main/master shouldn't be in the branch list"
     assert "already pushed" in _partial(["stage"], "prod: conflict")
     assert _partial([], "prod: conflict") == "prod: conflict"
+
+    # list_all_branches() is for the base-branch picker, so main/master ARE allowed there
+    assert isinstance(list_all_branches(), list)
+    assert set(list_branches()).issubset(set(list_all_branches()))
 
     # review prompt fills in and requires Zero Trust
     rp = REVIEW_PROMPT.format(task="anything")

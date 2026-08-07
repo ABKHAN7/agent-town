@@ -7,21 +7,21 @@
 <style>
 @property --c{syntax:'<color>';inherits:true;initial-value:#6a7590}
 :root{
-  --bg:#161320; --wall:#2c2350; --floor:#5a3d2b; --desk:#e8a559; --desk2:#c47f3a; --edge:#1c1430;
-  --ink:#f4eeff; --dim:#a99bd4; --panel:#211a38; --line:#3a2e5c; --panelhead:#2a2350cc;
-  --empty:#4f4478; --seated:#4d9dff; --thinking:#ffb703;
-  --working:#28e08a; --done:#ff5fb0; --error:#ff4d5e; --accent:#ff5fb0;
-  --well:#181233; --chip:#2a2350; --toastbg:#241c42; --shadow:0 8px 26px rgba(0,0,0,.5);
-  --id1:#ff6b6b; --id2:#ffb648; --id3:#2dd4a7; --id4:#4cc9f0; --id5:#b58cff; --id6:#ff8fc7;
+  --bg:#282a36; --wall:#1e1f29; --floor:#3b3a52; --desk:#ffb86c; --desk2:#e2a15c; --edge:#191a21;
+  --ink:#f8f8f2; --dim:#6272a4; --panel:#21222c; --line:#3d3f53; --panelhead:#2b2d3aee;
+  --empty:#6272a4; --seated:#8be9fd; --thinking:#f1fa8c;
+  --working:#50fa7b; --done:#ff79c6; --error:#ff5555; --accent:#ff79c6;
+  --well:#191a21; --chip:#2b2d3a; --toastbg:#21222c; --shadow:0 8px 22px rgba(0,0,0,.45);
+  --id1:#ff5555; --id2:#ffb86c; --id3:#50fa7b; --id4:#8be9fd; --id5:#bd93f9; --id6:#ff79c6;
   color-scheme:dark;
 }
 :root[data-theme="light"]{
-  --bg:#fbf3e8; --wall:#3a2f63; --floor:#e8c9a3; --desk:#f0a94e; --desk2:#c67f2c; --edge:#2a2145;
-  --ink:#241a3d; --dim:#6c5f96; --panel:#ffffff; --line:#e3d6c2; --panelhead:#f7ede0;
-  --empty:#cbb99e; --seated:#2f7fd6; --thinking:#c8860a; --working:#0f9d5c; --done:#d6338e;
-  --error:#d63a3a; --accent:#d6338e; --well:#fff8ee; --chip:#f3e4cf;
-  --toastbg:#ffffff; --shadow:0 10px 26px rgba(60,40,20,.18);
-  --id1:#e2493f; --id2:#d68318; --id3:#1a9e78; --id4:#1a86b8; --id5:#8656d6; --id6:#c93e8a;
+  --bg:#f5f4fb; --wall:#3b3a52; --floor:#e4ddf5; --desk:#f0a94e; --desk2:#c67f2c; --edge:#282a36;
+  --ink:#282a36; --dim:#5a5d80; --panel:#ffffff; --line:#e2e0f5; --panelhead:#f1effc;
+  --empty:#b8b8d1; --seated:#0e93b3; --thinking:#a67c00; --working:#1a9e56; --done:#c93e8a;
+  --error:#d63a3a; --accent:#c93e8a; --well:#f7f6fd; --chip:#eeecf9;
+  --toastbg:#ffffff; --shadow:0 10px 24px rgba(40,42,54,.14);
+  --id1:#d63a3a; --id2:#d68318; --id3:#1a9e56; --id4:#0e93b3; --id5:#8656d6; --id6:#c93e8a;
   color-scheme:light;
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -32,8 +32,8 @@ body{background:var(--bg);color:var(--ink);
 #app{width:100%;display:flex;flex-direction:column;gap:12px}
 
 #chips{display:flex;gap:8px;flex-wrap:wrap}
-.chip{display:flex;align-items:center;gap:7px;padding:7px 12px;border-radius:8px;
-  background:var(--chip);border:2px solid color-mix(in srgb,var(--c) 45%,var(--line));
+.chip{display:flex;align-items:center;gap:7px;padding:7px 12px;border-radius:10px;
+  background:var(--chip);border:1.5px solid color-mix(in srgb,var(--c) 45%,var(--line));
   cursor:pointer;font-size:12.5px;font-weight:600}
 .chip:hover{border-color:var(--c);box-shadow:0 0 0 3px color-mix(in srgb,var(--c) 20%,transparent)}
 .chip.sel{border-color:var(--c);background:color-mix(in srgb,var(--c) 16%,var(--chip));
@@ -42,47 +42,44 @@ body{background:var(--bg);color:var(--ink);
 .busy .dot{animation:pulse 1s infinite}
 @keyframes pulse{50%{opacity:.2}}
 
-#office{border:4px solid var(--edge);border-radius:10px;overflow:hidden;padding:0 22px 26px;
+#office{border:2px solid var(--edge);border-radius:14px;overflow:hidden;padding:0 22px 26px;
   position:relative;
-  background:radial-gradient(ellipse 900px 500px at 50% 0%,rgba(255,95,176,.10),transparent 60%),
+  background:radial-gradient(ellipse 900px 500px at 50% 0%,color-mix(in srgb,var(--accent) 12%,transparent),transparent 60%),
              repeating-linear-gradient(90deg,transparent 0 39px,rgba(0,0,0,.15) 39px 40px),
              repeating-linear-gradient(0deg,transparent 0 39px,rgba(0,0,0,.15) 39px 40px),
              linear-gradient(160deg,var(--floor),color-mix(in srgb,var(--floor) 65%,#000))}
 .wall{margin:0 -22px 6px;height:58px;background:linear-gradient(180deg,var(--wall),
-  color-mix(in srgb,var(--wall) 75%,#000));border-bottom:4px solid var(--accent);
+  color-mix(in srgb,var(--wall) 75%,#000));border-bottom:3px solid var(--accent);
   display:flex;align-items:center;justify-content:space-between;padding:0 18px;
   font-size:11.5px;color:var(--dim);position:relative;z-index:1}
 .wall i{display:inline-block;width:34px;height:22px;
-  background:linear-gradient(180deg,#4a3d78,#2c2350);border:2px solid #6b5aa8;
-  border-radius:2px;margin-left:8px;box-shadow:0 0 8px rgba(181,140,255,.35)}
+  background:linear-gradient(180deg,#4a3d78,#2c2350);border:1.5px solid #6b5aa8;
+  border-radius:3px;margin-left:8px;box-shadow:0 0 8px rgba(189,147,249,.35)}
+.baselabel{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim)}
+#basebranch{padding:4px 8px;font-size:11.5px;border-radius:8px;max-width:150px}
 .floorwrap{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:20px;padding-top:66px}
 @media(max-width:1100px){.floorwrap{grid-template-columns:1fr}}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(228px,1fr));gap:70px 24px}
 
-/* ---------- lounge: rest + play ---------- */
+/* ---------- lounge: hangout + play ---------- */
 .lounge{display:flex;flex-direction:column;gap:16px}
-.zone{background:rgba(0,0,0,.2);border:3px solid var(--edge);border-radius:6px;
+.zone{background:rgba(0,0,0,.2);border:1.5px solid var(--edge);border-radius:12px;
   padding:10px 12px 14px;position:relative;min-height:168px}
-.zone>h5{font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:#6c7791;
+.zone>h5{font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);
   font-weight:700;margin-bottom:8px}
 .zpeople{display:flex;flex-wrap:wrap;gap:2px;align-items:flex-end;min-height:76px}
-.zempty{font-size:11px;color:#525c73;font-style:italic;align-self:center}
+.zempty{font-size:11px;color:var(--dim);font-style:italic;align-self:center}
 
-.sofa{position:absolute;left:12px;right:12px;bottom:10px;height:30px;background:#4b4152;
-  border:3px solid #2b2532;border-radius:5px 5px 3px 3px;box-shadow:inset 0 -8px 0 #3a3242}
-.sofa:before,.sofa:after{content:"";position:absolute;bottom:-3px;width:9px;height:26px;
-  background:#4b4152;border:3px solid #2b2532;border-radius:4px}
-.sofa:before{left:-9px} .sofa:after{right:-9px}
-.plant{position:absolute;right:14px;top:26px;width:22px;height:34px;background:#8a6b4a;
-  border:2px solid #2b2532;border-radius:2px 2px 4px 4px}
-.plant:before{content:"";position:absolute;left:-8px;top:-20px;width:36px;height:26px;
-  background:#3f8f5a;border:2px solid #23412f;border-radius:50% 50% 40% 40%}
-.mug{position:absolute;left:16px;top:30px;width:26px;height:30px;background:#2f3746;
-  border:2px solid #171c25;border-radius:3px}
-.mug:before{content:"";position:absolute;inset:4px 4px 12px;background:#6b4a34;border-radius:2px}
+.rtbl{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);width:96px;height:96px;
+  border-radius:50%;background:radial-gradient(circle at 35% 30%,#a3703f,#6b4423);
+  border:2px solid var(--edge);box-shadow:inset 0 0 0 4px rgba(255,255,255,.07)}
+.rtbl i{position:absolute;font-style:normal;font-size:18px;
+  filter:drop-shadow(0 2px 2px rgba(0,0,0,.4))}
+.rtbl .card{left:16px;top:36px}
+.rtbl .drink{right:12px;top:18px}
 
 .tbl{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);width:150px;height:52px;
-  background:#2f7a4a;border:4px solid #1d2a22;border-radius:4px;
+  background:#2f7a4a;border:2px solid #1d2a22;border-radius:8px;
   box-shadow:inset 0 0 0 3px #358a55}
 .tbl:before{content:"";position:absolute;left:50%;top:-6px;bottom:-6px;width:3px;
   background:#dfe7f2;transform:translateX(-50%)}
@@ -102,6 +99,8 @@ body{background:var(--bg);color:var(--ink);
 .idle .arm{fill:var(--idc);transform-box:fill-box;transform-origin:center}
 .idle.at-play{animation:swing .5s ease-in-out infinite}
 @keyframes swing{50%{transform:translateY(-2px) rotate(3deg)}}
+.idle.at-chess{animation:chessy 2.4s ease-in-out infinite}
+@keyframes chessy{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px) rotate(-2deg)}}
 .idle.walking{animation:walkbob .28s ease-in-out infinite}
 .idle.thinking{animation:sway 2.2s ease-in-out infinite}
 .idle.working .armL{animation:tapA .16s steps(2) infinite}
@@ -111,22 +110,22 @@ body{background:var(--bg);color:var(--ink);
 @keyframes sway{50%{transform:translateX(2px)}}
 .idle.seated,.idle.done,.idle.error,.idle.stopped{animation:none}
 .idle .nm{position:absolute;left:50%;bottom:-3px;transform:translateX(-50%);font-size:9px;
-  color:#8794ad;white-space:nowrap;background:#161b24;border-radius:3px;padding:1px 5px}
+  color:var(--dim);white-space:nowrap;background:var(--well);border-radius:4px;padding:1px 5px}
 
 .desk{--id:var(--id1);--c:var(--id);position:relative;display:flex;flex-direction:column;
   align-items:center;cursor:pointer}
 .desk:nth-of-type(1){--id:var(--id1)} .desk:nth-of-type(2){--id:var(--id2)}
 .desk:nth-of-type(3){--id:var(--id3)} .desk:nth-of-type(4){--id:var(--id4)}
-.desk:nth-of-type(5){--id:var(--id5)} .desk:nth-of-type(6){--id:var(--id6)}
+.desk:nth-of-type(5){--id:var(--id5)}
 .desk.empty{opacity:.82}
 .desk.seated{--c:var(--seated)} .desk.thinking{--c:var(--thinking)}
 .desk.working{--c:var(--working)} .desk.done{--c:var(--done)} .desk.error{--c:var(--error)}
 .desk.sel .table{box-shadow:inset 0 -13px 0 var(--desk2),0 0 0 3px var(--c),0 0 16px var(--c)}
 
-.table{width:196px;height:62px;background:var(--desk);border:4px solid var(--edge);
-  border-bottom-width:8px;border-radius:4px;box-shadow:inset 0 -13px 0 var(--desk2);
+.table{width:196px;height:62px;background:var(--desk);border:2px solid var(--edge);
+  border-bottom-width:5px;border-radius:10px;box-shadow:inset 0 -13px 0 var(--desk2);
   position:relative;display:flex;align-items:center;justify-content:center}
-.mon{width:80px;height:46px;background:#171b24;border:4px solid #0e1117;border-radius:3px;
+.mon{width:80px;height:46px;background:#171b24;border:2px solid #0e1117;border-radius:6px;
   margin-top:-20px;overflow:hidden;position:relative}
 .scr{position:absolute;inset:3px;background:var(--c);opacity:.16}
 .desk.working .scr,.desk.thinking .scr{opacity:.5;animation:flick .9s steps(3) infinite}
@@ -136,37 +135,37 @@ body{background:var(--bg);color:var(--ink);
 .desk.working .scan{opacity:.9;animation:scan 1.1s linear infinite}
 @keyframes scan{from{top:0}to{top:38px}}
 .kbd{position:absolute;bottom:3px;width:68px;height:12px;background:#39414f;
-  border:3px solid #232935;border-radius:3px}
+  border:2px solid #232935;border-radius:4px}
 
 /* The chair is now the desk's static furniture - the person (sprite) sits in a separate layer. */
-.chair{width:60px;height:34px;margin-top:-4px;background:#2f3644;border:3px solid #1b202a;
-  border-radius:5px 5px 2px 2px;box-shadow:inset 0 -6px 0 #262c39;opacity:.85}
+.chair{width:60px;height:34px;margin-top:-4px;background:#2f3644;border:2px solid #1b202a;
+  border-radius:8px 8px 4px 4px;box-shadow:inset 0 -6px 0 #262c39;opacity:.85}
 
-.bubble{position:absolute;bottom:100%;margin-bottom:4px;width:250px;background:#eef2f8;
-  color:#1a1f2b;box-shadow:var(--shadow);padding:7px 10px;border:3px solid #0e1117;border-radius:5px;font-size:12px;
+.bubble{position:absolute;bottom:100%;margin-bottom:4px;width:250px;background:#f8f8f2;
+  color:#282a36;box-shadow:var(--shadow);padding:7px 10px;border:2px solid #191a21;border-radius:8px;font-size:12px;
   z-index:4;opacity:0;transform:translateY(5px);transition:.18s;pointer-events:none}
 .desk.thinking .bubble,.desk.working .bubble,.desk.error .bubble,.desk.done .bubble
   {opacity:1;transform:none}
 .bubble:after{content:"";position:absolute;top:100%;left:26px;border:8px solid transparent;
-  border-top-color:#0e1117}
-.bubble b{color:#0a5ea8} .desk.error .bubble b{color:#b81d1d}
+  border-top-color:#191a21}
+.bubble b{color:#44475a} .desk.error .bubble b{color:#c93030}
 .bubble span{display:block;color:#5c6577;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 .plate{margin-top:7px;display:flex;align-items:center;gap:7px;font-size:12px;
-  background:var(--well);border:3px solid var(--edge);border-radius:4px;padding:4px 10px}
-.taskline{margin-top:6px;width:210px;font-size:11.5px;color:#aeb8cc;text-align:center;
-  background:rgba(0,0,0,.26);border-radius:4px;padding:4px 7px;min-height:34px;
+  background:var(--well);border:2px solid var(--edge);border-radius:8px;padding:4px 10px}
+.taskline{margin-top:6px;width:210px;font-size:11.5px;color:var(--dim);text-align:center;
+  background:rgba(0,0,0,.26);border-radius:8px;padding:4px 7px;min-height:34px;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.taskline.none{color:#5d677d;font-style:italic}
+.taskline.none{color:var(--dim);font-style:italic;opacity:.7}
 
 #bar{display:flex;flex-direction:column;gap:10px;background:var(--panel);
-  border:2px solid var(--line);border-radius:7px;padding:10px}
+  border:1.5px solid var(--line);border-radius:14px;padding:10px}
 .barrow{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
 .count{display:flex;align-items:center;gap:7px;font-size:12.5px;background:var(--chip);
-  border-radius:6px;padding:6px 12px;color:var(--dim)}
+  border-radius:8px;padding:6px 12px;color:var(--dim)}
 .count b{color:var(--ink)}
-input,select,textarea{background:var(--well);border:2px solid var(--line);color:var(--ink);
-  border-radius:6px;padding:8px 11px;font:inherit}
+input,select,textarea{background:var(--well);border:1.5px solid var(--line);color:var(--ink);
+  border-radius:8px;padding:8px 11px;font:inherit}
 .bartask{align-items:stretch}
 #task{flex:1;min-width:260px;resize:vertical;min-height:110px;line-height:1.5}
 .taskside{display:flex;flex-direction:column;gap:8px;justify-content:flex-end}
@@ -175,45 +174,45 @@ input,select,textarea{background:var(--well);border:2px solid var(--line);color:
 #attachments{display:flex;gap:8px;flex-wrap:wrap}
 #attachments:empty{display:none}
 .achip{display:flex;align-items:center;gap:6px;background:var(--well);
-  border:2px solid var(--line);border-radius:7px;padding:5px 6px 5px 8px;font-size:11.5px}
-.achip img{width:26px;height:26px;object-fit:cover;border-radius:4px}
+  border:1.5px solid var(--line);border-radius:10px;padding:5px 6px 5px 8px;font-size:11.5px}
+.achip img{width:26px;height:26px;object-fit:cover;border-radius:6px}
 .achip .aico{width:26px;height:26px;display:flex;align-items:center;justify-content:center;
-  background:var(--chip);border-radius:4px;font-size:14px}
-.achip button{padding:2px 7px;font-size:11px;box-shadow:none;border-radius:5px}
+  background:var(--chip);border-radius:6px;font-size:14px}
+.achip button{padding:2px 7px;font-size:11px;box-shadow:none;border-radius:6px}
 button{background:linear-gradient(135deg,var(--accent),var(--working));
-  color:#101018;border:0;border-radius:9px;padding:10px 22px;
-  font:inherit;font-weight:800;cursor:pointer;box-shadow:0 4px 0 rgba(0,0,0,.25)}
+  color:#191a21;border:0;border-radius:10px;padding:10px 22px;
+  font:inherit;font-weight:800;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,.35)}
 button:disabled{opacity:.4;cursor:default;box-shadow:none}
 #err{font-size:12px;color:var(--error);width:100%}
-.hint{font-size:11px;color:#606a80;width:100%}
+.hint{font-size:11px;color:var(--dim);width:100%}
 
 /* ---------- detail panel ---------- */
-#panel{background:var(--panel);border:2px solid var(--line);border-radius:7px;overflow:hidden}
+#panel{background:var(--panel);border:1.5px solid var(--line);border-radius:14px;overflow:hidden}
 #phead{display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--panelhead);
-  border-bottom:2px solid var(--line);flex-wrap:wrap}
+  border-bottom:1.5px solid var(--line);flex-wrap:wrap}
 #phead .who{font-weight:700}
-.pill{font-size:11px;padding:3px 9px;border-radius:20px;background:var(--c);color:#0d1117;
+.pill{font-size:11px;padding:3px 9px;border-radius:20px;background:var(--c);color:#191a21;
   font-weight:700}
 #pmeta{margin-left:auto;font-size:11.5px;color:var(--dim)}
 .pbody{padding:12px 14px;display:grid;grid-template-columns:1fr 1fr;gap:14px}
 @media(max-width:860px){.pbody{grid-template-columns:1fr}}
 .sec h4{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.09em;
   margin-bottom:6px;font-weight:700}
-#ptask{background:var(--well);border:2px solid var(--line);border-radius:6px;padding:9px 11px;
+#ptask{background:var(--well);border:1.5px solid var(--line);border-radius:10px;padding:9px 11px;
   font-size:12.5px;min-height:52px;white-space:pre-wrap;word-break:break-word}
-#plog{background:var(--well);border:2px solid var(--line);border-radius:6px;padding:7px 9px;
+#plog{background:var(--well);border:1.5px solid var(--line);border-radius:10px;padding:7px 9px;
   height:180px;overflow:auto;font-size:11.5px}
 #plog div{padding:2px 0;border-bottom:1px solid var(--line);display:flex;gap:8px}
 #plog b{color:var(--working);flex:none;min-width:74px}
-#plog s{color:#6d7a92;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#plog s{color:var(--dim);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #pout{grid-column:1/-1}
-#pout pre{background:var(--well);border:2px solid var(--line);border-radius:6px;padding:11px;
+#pout pre{background:var(--well);border:1.5px solid var(--line);border-radius:10px;padding:11px;
   max-height:340px;overflow:auto;font-size:12.5px;white-space:pre-wrap;word-break:break-word;
-  color:#cbd5e6}
+  color:var(--ink)}
 .assign{display:flex;gap:8px;margin-top:8px}
 .assign input{flex:1}
-.brx{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#9fb0c8;
-  background:var(--well);border:1px solid #263041;border-radius:4px;padding:4px 8px;cursor:pointer}
+.brx{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--dim);
+  background:var(--well);border:1px solid var(--line);border-radius:8px;padding:4px 8px;cursor:pointer}
 .brx input{margin:0;cursor:pointer}
 
 /* ---------- smooth theme + status transitions ---------- */
@@ -227,13 +226,13 @@ button:disabled{opacity:.4;cursor:default;box-shadow:none}
 .desk:hover .table{filter:brightness(1.06);box-shadow:inset 0 -13px 0 var(--desk2),0 0 0 2px var(--c)}
 .desk:hover .plate{box-shadow:0 0 0 2px var(--c)}
 button{transition:transform .12s ease,box-shadow .15s ease,filter .2s ease,background-color .2s ease}
-button:hover:not(:disabled){filter:brightness(1.1) saturate(1.15);
-  transform:translateY(-2px) scale(1.03);box-shadow:0 6px 0 rgba(0,0,0,.25)}
-button:active:not(:disabled){transform:translateY(2px) scale(.98);box-shadow:0 2px 0 rgba(0,0,0,.25)}
-button.ghost{background:var(--well);color:var(--ink);border:2px solid var(--line);
-  font-weight:700;box-shadow:0 4px 0 var(--line)}
-button.ghost:hover:not(:disabled){border-color:var(--accent);box-shadow:0 6px 0 var(--line)}
-button.ghost:active:not(:disabled){box-shadow:0 2px 0 var(--line)}
+button:hover:not(:disabled){filter:brightness(1.08) saturate(1.15);
+  transform:translateY(-2px);box-shadow:0 6px 16px rgba(0,0,0,.4)}
+button:active:not(:disabled){transform:translateY(0);box-shadow:0 2px 6px rgba(0,0,0,.35)}
+button.ghost{background:var(--well);color:var(--ink);border:1.5px solid var(--line);
+  font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.25)}
+button.ghost:hover:not(:disabled){border-color:var(--accent);box-shadow:0 4px 12px rgba(0,0,0,.3)}
+button.ghost:active:not(:disabled){box-shadow:0 1px 4px rgba(0,0,0,.25)}
 .idle{cursor:pointer} .idle:hover{transform:translateY(-6px) scale(1.06)}
 .brx{transition:border-color .2s ease,background-color .2s ease}
 .brx:hover{border-color:var(--accent)}
@@ -241,15 +240,15 @@ input:focus,select:focus{outline:none;border-color:var(--accent);
   box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
 
 /* ---------- theme toggle ---------- */
-#themebtn{background:none;border:2px solid #454f63;color:var(--dim);padding:5px 10px;
-  border-radius:6px;font-size:15px;cursor:pointer;line-height:1}
+#themebtn{background:none;border:1.5px solid var(--line);color:var(--dim);padding:5px 10px;
+  border-radius:8px;font-size:15px;cursor:pointer;line-height:1}
 #themebtn:hover{border-color:var(--accent);color:var(--ink)}
 
 /* ---------- toast notifications ---------- */
 #toasts{position:fixed;top:16px;right:16px;z-index:50;display:flex;flex-direction:column;
   gap:8px;max-width:340px}
-.toast{background:var(--toastbg);border:2px solid var(--line);border-left:5px solid var(--accent);
-  color:var(--ink);border-radius:7px;padding:10px 14px;font-size:12.5px;box-shadow:var(--shadow);
+.toast{background:var(--toastbg);border:1.5px solid var(--line);border-left:4px solid var(--accent);
+  color:var(--ink);border-radius:10px;padding:10px 14px;font-size:12.5px;box-shadow:var(--shadow);
   animation:toastIn .25s ease;display:flex;gap:8px;align-items:flex-start}
 .toast.bad{border-left-color:var(--error)}
 .toast.leaving{animation:toastOut .2s ease forwards}
@@ -268,18 +267,27 @@ input:focus,select:focus{outline:none;border-color:var(--accent);
 
 /* ---------- urgent room ---------- */
 .urgentroom{margin:0 -22px 18px;padding:14px 22px 20px;position:relative;z-index:1;
-  background:repeating-linear-gradient(45deg,rgba(255,77,94,.08) 0 12px,
-             rgba(255,77,94,.03) 12px 24px),
-             linear-gradient(180deg,rgba(255,77,94,.14),transparent 70%);
-  border-bottom:3px dashed color-mix(in srgb,var(--error) 55%,transparent)}
+  background:repeating-linear-gradient(45deg,color-mix(in srgb,var(--error) 8%,transparent) 0 12px,
+             color-mix(in srgb,var(--error) 3%,transparent) 12px 24px),
+             linear-gradient(180deg,color-mix(in srgb,var(--error) 14%,transparent),transparent 70%);
+  border-bottom:2px dashed color-mix(in srgb,var(--error) 55%,transparent)}
 .urgentroom>h5{font-size:11px;letter-spacing:.1em;text-transform:uppercase;
   color:var(--error);font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:8px}
 .urgentroom>h5:before{content:"";width:9px;height:9px;border-radius:50%;background:var(--error);
   animation:pulse 1.1s infinite}
 .urgentroom>h5 span{color:var(--dim);font-weight:500;text-transform:none;letter-spacing:0;font-size:10.5px}
+.urgentrow{display:flex;gap:40px;align-items:flex-end;justify-content:center;flex-wrap:wrap}
 .urgentgrid{grid-template-columns:repeat(2,minmax(180px,220px));gap:70px 40px;justify-content:center}
 .desk.urgent{--id:var(--error)}
 .desk.urgent .table{box-shadow:inset 0 -13px 0 var(--desk2),0 0 0 2px var(--error)}
+
+.chesscorner{background:rgba(0,0,0,.2);border:1.5px solid var(--edge);border-radius:12px;
+  padding:10px 16px 60px;min-width:150px;position:relative;text-align:center}
+.chesscorner h6{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+  font-weight:700;margin-bottom:8px}
+.chessboard{width:72px;height:72px;margin:0 auto;border:2px solid var(--edge);border-radius:6px;
+  background-image:repeating-conic-gradient(var(--well) 0% 25%, var(--floor) 0% 50%);
+  background-size:18px 18px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
 
 /* ---------- tiny info chips (model/domain/urgency) ---------- */
 .tagchip{font-size:10.5px;padding:3px 9px;border-radius:20px;background:var(--well);
@@ -300,7 +308,7 @@ input:focus,select:focus{outline:none;border-color:var(--accent);
 .walker.walking{animation:walkbob .28s ease-in-out infinite}
 @keyframes walkbob{0%,100%{transform:translateY(0) rotate(-3deg)}50%{transform:translateY(-4px) rotate(3deg)}}
 .walker .nm{position:absolute;left:50%;bottom:-3px;transform:translateX(-50%);font-size:8.5px;
-  color:#8794ad;white-space:nowrap;background:#161b24;border-radius:3px;padding:1px 5px}
+  color:var(--dim);white-space:nowrap;background:var(--well);border-radius:4px;padding:1px 5px}
 
 /* ---------- confetti burst on task completion ---------- */
 .confetti{position:fixed;width:8px;height:8px;border-radius:2px;pointer-events:none;
@@ -320,20 +328,29 @@ input:focus,select:focus{outline:none;border-color:var(--accent);
     <div class="wall"><span>AGENT TOWN &nbsp;/&nbsp; <span id="proj">…</span>
         <span class="odoobadge" id="odoobadge"></span></span>
       <span style="display:flex;align-items:center;gap:10px">
+        <label class="baselabel" title="New work branches from here - stays in sync with your repo">
+          🌿 <select id="basebranch"></select></label>
         <button id="themebtn" title="Change theme">🌙</button>
         <span><i></i><i></i><i></i></span></span></div>
     <div id="people"></div>
     <div class="urgentroom" id="urgentroom">
-      <h5>🚨 Urgent Room <span id="urgentsub">— always kept empty</span></h5>
-      <div class="grid urgentgrid" id="urgentgrid"></div>
+      <h5>🚨 Urgent Room <span id="urgentsub">— always kept empty, plays chess when idle</span></h5>
+      <div class="urgentrow">
+        <div class="grid urgentgrid" id="urgentgrid"></div>
+        <div class="chesscorner">
+          <h6>♟ Chess corner</h6>
+          <div class="chessboard"></div>
+          <div class="zpeople" id="chesspeople"></div>
+        </div>
+      </div>
     </div>
     <div class="floorwrap">
       <div class="grid" id="grid"></div>
       <div class="lounge">
-        <div class="zone rest">
-          <h5>☕ Rest area</h5>
+        <div class="zone hangout">
+          <h5>🎉 Hangout</h5>
           <div class="zpeople" id="rest"></div>
-          <div class="mug"></div><div class="plant"></div><div class="sofa"></div>
+          <div class="rtbl"><i class="card">🂡</i><i class="drink">🍹</i></div>
         </div>
         <div class="zone play">
           <h5>🏓 Play area</h5>
@@ -346,8 +363,8 @@ input:focus,select:focus{outline:none;border-color:var(--accent);
 
   <div id="bar">
     <div class="barrow">
-      <div class="count">👥 <b id="cSeat">0/6</b> seat</div>
-      <div class="count">⚡ <b id="cBusy">0/6</b> busy</div>
+      <div class="count">👥 <b id="cSeat">0/7</b> seat</div>
+      <div class="count">⚡ <b id="cBusy">0/7</b> busy</div>
       <div class="count">🔌 <b id="cAwake">—</b></div>
       <select id="ttype"></select>
       <select id="module"><option value="">— choose a module —</option></select>
@@ -376,7 +393,8 @@ Ctrl+V pastes a screenshot/image straight in here. Ctrl+Enter to assign."></text
     <div id="attachments"></div>
     <div class="hint">Each desk works in its own git worktree — your checkout of the base branch is
       never touched. Agents can't commit/push; nothing reaches git until you run a Review yourself
-      and click "Push".
+      and click "Push". The 🌿 branch picker up top decides which branch new work starts from, and
+      stays in sync with your repo — it updates as branches are added or removed.
       <br>≈$ is just a plan-usage estimate — if you're on a subscription (Pro) plan, this isn't an
       actual charge. But your rate limit is spent the same way, so avoid running more than 2-3 desks
       at once.
@@ -385,8 +403,10 @@ Ctrl+V pastes a screenshot/image straight in here. Ctrl+Enter to assign."></text
       To stop work partway through, use 🛑 Stop in the panel; if you missed a requirement, add it
       with "Continue" on the same task.
       <br>🚨 The <b>Urgent Room</b> is always kept empty, reserved for critical work only — fast
-      model, AI triage skipped too. For the other 6 desks, AI decides which model (haiku/sonnet/opus)
-      fits before every task, and whether the text itself signals urgency.
+      model, AI triage skipped too. When idle, its two agents play chess with each other. For the
+      other 5 desks, AI decides which model (haiku/sonnet/opus) fits before every task, and whether
+      the text itself signals urgency; when idle, two of them play table tennis and the rest hang
+      out at the table.
       Domain (Payroll/HR/Inventory…) is optional but improves accuracy when given.
       You can also describe a task by speaking with 🎤, or by giving an image/Excel/PDF via 📎 or
       Ctrl+V. Click ✏️ next to any agent's name to rename them.</div>
@@ -411,11 +431,11 @@ Ctrl+V pastes a screenshot/image straight in here. Ctrl+Enter to assign."></text
         <div id="plog"></div>
       </div>
       <div class="sec" id="pout">
-        <h4>Output <a id="pfile" href="#" target="_blank" hidden style="color:#5aa9e6">📄 file</a></h4>
+        <h4>Output <a id="pfile" href="#" target="_blank" hidden style="color:var(--seated)">📄 file</a></h4>
         <pre id="pouttext">—</pre>
       </div>
       <div class="sec" id="pship">
-        <h4>Outcome <span id="pchanged" style="color:#5d677d;font-weight:400"></span></h4>
+        <h4>Outcome <span id="pchanged" style="color:var(--dim);font-weight:400"></span></h4>
         <div class="assign">
           <button id="bdiff" class="ghost">Diff</button>
           <button id="breview" class="ghost">Review</button>
@@ -444,10 +464,10 @@ const IDLE_BOT = `<svg viewBox="0 0 20 20" shape-rendering="crispEdges">
 const BUSY = ['seated','thinking','working'];
 const $ = id => document.getElementById(id);
 let built = false, sel = null, last = {}, urgentAgents = [];
-// Identity color - normal desks 1-6 get their own color, the urgent room is
+// Identity color - normal desks 1-5 get their own color, the urgent room is
 // always danger-red. The lounge, walker, and nameplate all pull color from here.
 const DESK_ID = {'desk-1':'--id1','desk-2':'--id2','desk-3':'--id3',
-  'desk-4':'--id4','desk-5':'--id5','desk-6':'--id6'};
+  'desk-4':'--id4','desk-5':'--id5'};
 const idColorVar = agent => urgentAgents.includes(agent) ? '--error' : (DESK_ID[agent] || '--dim');
 const nameOf = d => d.name || d.agent;
 const walkTimers = {};
@@ -471,7 +491,7 @@ function slotRect(zoneEl, idx, total, office){
 }
 
 function burstConfetti(x, y){
-  var colors = ['var(--id1)','var(--id2)','var(--id3)','var(--id4)','var(--id5)','var(--id6)',
+  var colors = ['var(--id1)','var(--id2)','var(--id3)','var(--id4)','var(--id5)',
                 'var(--working)','var(--accent)'];
   for(var i = 0; i < 18; i++){
     var el = document.createElement('div');
@@ -499,7 +519,7 @@ function toast(msg, ok){
 var THEME_KEY = 'agenttown-theme';
 function applyTheme(t){
   document.documentElement.dataset.theme = t;
-  $('themebtn').textContent = t === 'light' ? '\u2600\ufe0f' : '\ud83c\udf19';
+  $('themebtn').textContent = t === 'light' ? '☀️' : '🌙';
   localStorage.setItem(THEME_KEY, t);
 }
 applyTheme(localStorage.getItem(THEME_KEY) || 'dark');
@@ -656,15 +676,21 @@ function render(s){
 
   // Everyone now moves in REAL TIME: whoever's desk is empty has their sprite
   // "walk" toward a lounge slot, and back toward their desk once they get work.
-  const idle = s.desks.filter(d => d.status === 'empty');
-  const players = idle.slice(0, 2), resters = idle.slice(2);
+  // The two Urgent Room agents get their own chess-corner pool, separate from
+  // the other five (who share the ping-pong table and the hangout table).
+  const idleNormal = s.desks.filter(d => d.status === 'empty' && !urgentAgents.includes(d.agent));
+  const idleUrgent = s.desks.filter(d => d.status === 'empty' && urgentAgents.includes(d.agent));
+  const players = idleNormal.slice(0, 2), resters = idleNormal.slice(2);
   const office = officeRect();
   for(const d of s.desks){
     const el2 = $('p-' + d.agent);
     if(!el2 || !el2.getBoundingClientRect) continue;
-    let target, atPlay = false;
+    let target, atPlay = false, atChess = false;
     if(d.status !== 'empty'){
       target = anchorRect($('d-' + d.agent), office);
+    }else if(urgentAgents.includes(d.agent)){
+      target = slotRect($('chesspeople'), idleUrgent.indexOf(d), idleUrgent.length, office);
+      atChess = true;
     }else{
       const pi = players.indexOf(d);
       if(pi >= 0){ target = slotRect($('play'), pi, players.length, office); atPlay = true; }
@@ -681,7 +707,8 @@ function render(s){
       }
     }
     el2.className = 'idle' + (el2.classList.contains('walking') ? ' walking' : ' ' + d.status)
-      + (atPlay && d.status === 'empty' ? ' at-play' : '');
+      + (atPlay && d.status === 'empty' ? ' at-play' : '')
+      + (atChess && d.status === 'empty' ? ' at-chess' : '');
   }
 
   if(!me) return;
@@ -703,7 +730,7 @@ function render(s){
   const lg = $('plog'), atBottom = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 24;
   lg.innerHTML = (me.log||[]).map(x =>
     `<div><b>${x.tool}</b><s>${(x.detail||'').replace(/</g,'&lt;')}</s></div>`).join('')
-    || '<div style="color:#5d677d">— no steps yet —</div>';
+    || '<div style="color:var(--dim)">— no steps yet —</div>';
   if(atBottom) lg.scrollTop = lg.scrollHeight;
   $('pouttext').textContent = me.output || (BUSY.includes(me.status) ? '⏳ running…' : '—');
   $('pfile').hidden = !me.report; if(me.report) $('pfile').href = '/reports/'+me.report;
@@ -807,18 +834,49 @@ $('bdiff').onclick    = () => window.open('/diff/'+sel, '_blank');
 $('breview').onclick  = () => post('/review', {agent: sel}, selName()+' review started');
 $('bdiscard').onclick = () => confirm(selName()+"'s work will be permanently discarded. Are you sure?")
   && post('/discard', {agent: sel}, selName()+"'s work was discarded");
-let branchesReady = false;
-async function loadBranches(){
-  if(branchesReady) return;
+
+const targets = () => [...$('brs').querySelectorAll('input:checked')].map(x => x.value);
+
+// Branch lists (push targets + base-branch picker) refresh every few seconds
+// instead of once, so they stay in sync as branches are added/removed on the
+// remote - previously-checked boxes are preserved across a refresh.
+const BRANCH_REFRESH_MS = 5000;
+let lastBranchFetch = 0;
+async function loadBranches(force){
+  const now = Date.now();
+  if(!force && now - lastBranchFetch < BRANCH_REFRESH_MS) return;
+  lastBranchFetch = now;
   try{
     const b = await (await fetch('/branches')).json();
-    $('brs').innerHTML = b.branches.map(n =>
+    const checked = new Set(targets());
+    const list = b.branches || [];
+    $('brs').innerHTML = list.map(n =>
       `<label class="brx"><input type="checkbox" value="${n}"${
-        b.default.includes(n) ? ' checked' : ''}> ${n}</label>`).join('')
+        (checked.has(n) || (!checked.size && (b.default||[]).includes(n))) ? ' checked' : ''}> ${n}</label>`).join('')
       || '<span class="zempty">no branches found</span>';
-    branchesReady = true;
-  }catch(e){ /* retry on the next poll */ }
+  }catch(e){ /* retry on the next cycle */ }
 }
+
+let lastBaseFetch = 0;
+async function loadBaseBranches(force){
+  const now = Date.now();
+  if(!force && now - lastBaseFetch < BRANCH_REFRESH_MS) return;
+  lastBaseFetch = now;
+  try{
+    const b = await (await fetch('/base-branches')).json();
+    const list = b.branches || [];
+    const sel2 = $('basebranch'), current = sel2.value || b.base || '';
+    sel2.innerHTML = list.map(n =>
+      `<option value="${n}"${n === current ? ' selected' : ''}>${n}</option>`).join('')
+      || '<option value="">no branches found</option>';
+    if(!list.includes(current) && b.base) sel2.value = b.base;
+  }catch(e){ /* retry on the next cycle */ }
+}
+$('basebranch').onchange = () => {
+  const branch = $('basebranch').value;
+  if(!branch) return;
+  post('/base', {branch}, 'New work will branch from ' + branch);
+};
 
 let modulesReady = false;
 async function loadModules(){
@@ -845,7 +903,6 @@ $('aisuggest').onclick = async () => {
   }catch(e){ toast(String(e), false); }
   finally{ btn.textContent = orig; syncModuleUI(); }
 };
-const targets = () => [...$('brs').querySelectorAll('input:checked')].map(x => x.value);
 $('bship').onclick    = () => {
   const brs = targets();
   if(!brs.length){ toast('no branch selected', false); return; }
@@ -875,6 +932,7 @@ async function poll(){
   catch(e){ if(!wasDown){ toast('is the server down?', false); wasDown = true; } return; }
   wasDown = false;
   loadBranches();
+  loadBaseBranches();
   loadModules();
   try{ render(s); }
   catch(e){ toast('UI error: ' + e, false); console.error(e); }

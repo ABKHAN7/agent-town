@@ -8,7 +8,7 @@ The whole thing is two files (`fleet.py` + `index.html`): no database, no cloud,
 
 ## How it works
 
-- **Desks** — 6 general-purpose desks plus a 2-desk **Urgent Room** that's always kept free for critical work.
+- **Desks** — 5 general-purpose desks plus a 2-desk **Urgent Room** that's always kept free for critical work.
 - Assigning a task spins up a `claude -p ...` subprocess in a dedicated git worktree (`fleet/<desk>` branch), scoped to a minimal, read-mostly toolset.
 - AI automatically picks a model (haiku/sonnet/opus) and flags whether a task sounds urgent, based on the task text.
 - When an agent finishes, you can **Review** (a separate read-only reviewer agent checks the diff against your repo's `CLAUDE.md` conventions), then **Push** to one or more branches, or **Discard**.
@@ -48,7 +48,7 @@ Run it:
 python3 fleet.py
 ```
 
-Open **http://127.0.0.1:8765** — you should see 6 desks + an Urgent Room, all "empty".
+Open **http://127.0.0.1:8765** — you should see 5 desks + an Urgent Room, all "empty".
 
 To keep it running after closing the terminal:
 
@@ -61,7 +61,7 @@ nohup python3 fleet.py > server.log 2>&1 &
 | Variable | Default | Purpose |
 |---|---|---|
 | `FLEET_PROJECT` | `~/odoo/custom_addons` | Path to the Odoo addons repo to work on |
-| `FLEET_BASE` | `main` | Branch each desk's worktree resets to |
+| `FLEET_BASE` | `main` | Branch each desk's worktree resets to. Can also be changed at runtime from the dashboard's base-branch picker, which stays in sync with your repo's actual branches. |
 | `FLEET_PORT` | `8765` | Port the dashboard listens on |
 | `FLEET_ODOO_VERSION` | `17` | Odoo version referenced in agent prompts |
 | `FLEET_REVIEW_AGENT` | *(none)* | Name of a custom subagent (`.claude/agents/*.md`) to use for reviews, if you have one. Reviews use the default agent otherwise. |
