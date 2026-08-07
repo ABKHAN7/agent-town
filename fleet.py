@@ -26,6 +26,11 @@ PORT = int(os.environ.get("FLEET_PORT", "8765"))
 
 ODOO_VERSION = os.environ.get("FLEET_ODOO_VERSION", "17")
 
+# Optional: name of a custom subagent (see `claude agent` / .claude/agents/*.md)
+# to use for reviews. Unset by default so this works out of the box on a stock
+# Claude Code install - set FLEET_REVIEW_AGENT if you have a dedicated one.
+REVIEW_AGENT = os.environ.get("FLEET_REVIEW_AGENT") or None
+
 # Odoo Enterprise-specific conventions - attached to every write-type prompt so
 # the agent uses version-appropriate patterns (the repo's own CLAUDE.md Zero
 # Trust policy is separate; this is just an extra Odoo-syntax layer on top).
@@ -135,7 +140,7 @@ TASK_TYPES = {
     },
     "review": {
         "label": "Review (read-only)",
-        "agent": "code-reviewer",
+        "agent": REVIEW_AGENT,
         "tools": READ_TOOLS,
         "template": (
             "Review this: {task}\n\n"
@@ -171,9 +176,14 @@ PROC_LOCK = threading.Lock()
 STOPPING = set()
 
 
-def set_(name, **kw):
+def set_(desk, **kw):
+    """desk is a positional param (not `name`) on purpose: STATE entries have
+    their own "name" field (see blank()), and callers regularly do
+    set_(desk, **blank(desk)) or **patch dicts that include "name" - if this
+    parameter were itself called `name`, that would collide and crash with
+    "multiple values for argument 'name'"."""
     with LOCK:
-        STATE[name].update(kw)
+        STATE[desk].update(kw)
 
 
 def rename_agent(desk, new_name):
@@ -691,9 +701,10 @@ def review_desk(desk):
          tool="", detail="reading the diff", started=time.time(), log=[],
          output="", turns=0, cost=0.0, reviewed=desk, verdict="")
     cmd = ["claude", "-p", REVIEW_PROMPT.format(task=task),
-           "--agent", "code-reviewer",
            "--output-format", "stream-json", "--verbose",
            "--allowedTools", *READ_TOOLS]
+    if REVIEW_AGENT:
+        cmd = cmd[:3] + ["--agent", REVIEW_AGENT] + cmd[3:]
     if shutil.which("systemd-inhibit"):
         cmd = INHIBIT + cmd
     try:

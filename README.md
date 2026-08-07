@@ -64,6 +64,7 @@ nohup python3 fleet.py > server.log 2>&1 &
 | `FLEET_BASE` | `main` | Branch each desk's worktree resets to |
 | `FLEET_PORT` | `8765` | Port the dashboard listens on |
 | `FLEET_ODOO_VERSION` | `17` | Odoo version referenced in agent prompts |
+| `FLEET_REVIEW_AGENT` | *(none)* | Name of a custom subagent (`.claude/agents/*.md`) to use for reviews, if you have one. Reviews use the default agent otherwise. |
 
 ## Voice input (optional)
 
