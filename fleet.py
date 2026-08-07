@@ -284,6 +284,112 @@ def desk_changed_files(name, fresh=False):
     return n
 
 
+# ---------- in-browser file explorer / editor (scoped to a desk's worktree) ----------
+
+FILE_EXPLORE_MAX_BYTES = 1_000_000  # plenty for any real source file, small for the browser
+
+
+def desk_file_path(desk, rel_path):
+    """Resolve rel_path inside desk's worktree, refusing traversal outside it.
+    Returns an absolute path, or None if the desk is unknown or the path escapes."""
+    if desk not in DESKS:
+        return None
+    root = os.path.realpath(desk_path(desk))
+    target = os.path.realpath(os.path.join(root, rel_path or ""))
+    if target != root and not target.startswith(root + os.sep):
+        return None
+    return target
+
+
+def list_desk_files(desk):
+    """Tracked + untracked-but-not-ignored files in the desk's worktree, sorted."""
+    root = desk_path(desk)
+    if not os.path.isdir(root):
+        return []
+    rc, out = git(["ls-files", "--cached", "--others", "--exclude-standard"], cwd=root)
+    if rc != 0:
+        return []
+    return sorted(l for l in out.splitlines() if l.strip())
+
+
+def read_desk_file(desk, rel_path):
+    """Returns (ok, content_or_error, truncated)."""
+    path = desk_file_path(desk, rel_path)
+    if not path or not os.path.isfile(path):
+        return False, "file not found", False
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(FILE_EXPLORE_MAX_BYTES + 1)
+    except OSError as e:
+        return False, str(e), False
+    if b"\x00" in raw:
+        return False, "binary file - can't edit here", False
+    truncated = len(raw) > FILE_EXPLORE_MAX_BYTES
+    return True, raw[:FILE_EXPLORE_MAX_BYTES].decode("utf-8", "replace"), truncated
+
+
+def write_desk_file(desk, rel_path, content):
+    """Returns (ok, error_or_none)."""
+    path = desk_file_path(desk, rel_path)
+    if not path:
+        return False, "invalid path"
+    if not os.path.isdir(os.path.dirname(path)):
+        return False, "directory doesn't exist"
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+    except OSError as e:
+        return False, str(e)
+    return True, None
+
+
+# ---------- structured diff (for the inline per-file diff viewer) ----------
+
+def parse_unified_diff(diff_text):
+    """`git diff` output -> [{"file", "hunks":[{"header","lines":[(sign,text)]}]}].
+    Pure text parsing - git already computed the diff, this just groups it by
+    file/hunk so the UI can color +/- lines without shelling out again."""
+    files = []
+    cur = hunk = None
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            m = re.match(r"diff --git a/(.+) b/(.+)$", line)
+            cur = {"file": m.group(2) if m else line[11:], "hunks": [], "binary": False}
+            files.append(cur)
+            hunk = None
+        elif line.startswith("Binary files"):
+            if cur:
+                cur["binary"] = True
+        elif line.startswith("@@"):
+            hunk = {"header": line, "lines": []}
+            if cur is not None:
+                cur["hunks"].append(hunk)
+        elif line.startswith(("+++ ", "--- ", "index ", "\\")):
+            continue  # "\ No newline at end of file" and file-header lines
+        elif hunk is not None:
+            sign = line[:1] if line[:1] in ("+", "-") else " "
+            hunk["lines"].append([sign, line[1:]])
+    return files
+
+
+def desk_diff_json(desk):
+    """Tracked changes (via git diff) plus untracked new files (shown as all-added)."""
+    root = desk_path(desk)
+    rc, out = git(["diff", "HEAD"], cwd=root)
+    files = parse_unified_diff(out) if rc == 0 else []
+    rc2, untracked = git(["ls-files", "--others", "--exclude-standard"], cwd=root)
+    for rel in (l for l in untracked.splitlines() if l.strip()) if rc2 == 0 else ():
+        ok, content, _ = read_desk_file(desk, rel)
+        if not ok:
+            files.append({"file": rel, "binary": True,
+                          "hunks": [{"header": "new file", "lines": [["+", "(binary or unreadable)"]]}]})
+            continue
+        files.append({"file": rel, "binary": False,
+                      "hunks": [{"header": "@@ new file @@",
+                                "lines": [["+", l] for l in content.splitlines()]}]})
+    return files
+
+
 def ensure_worktree(name):
     """Prepare the desk's worktree, reset to BASE. Returns (ok, message)."""
     path = desk_path(name)
@@ -843,7 +949,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         # Strip any query string (?debug=1 and the like, e.g. from browser
         # extensions) before matching routes, so an extra ?param doesn't 404.
-        path = urllib.parse.urlsplit(self.path).path
+        split = urllib.parse.urlsplit(self.path)
+        path = split.path
+        query = urllib.parse.parse_qs(split.query)
         if path in ("/", "/index.html"):
             try:
                 with open(os.path.join(HERE, "index.html"), "rb") as f:
@@ -884,6 +992,25 @@ class Handler(BaseHTTPRequestHandler):
             body = out + ("\n=== new files ===\n" + untracked if untracked.strip() else "") \
                    + "\n\n" + out2
             return self._send(200, body.encode("utf-8"), "text/plain; charset=utf-8")
+        if path.startswith("/diff-json/"):
+            n = os.path.basename(path[len("/diff-json/"):])
+            if n not in STATE:
+                return self._send(404, b"unknown desk", "text/plain")
+            return self._send(200, json.dumps({"files": desk_diff_json(n)}))
+        if path.startswith("/files/"):
+            n = os.path.basename(path[len("/files/"):])
+            if n not in DESKS:
+                return self._send(404, b"unknown desk", "text/plain")
+            return self._send(200, json.dumps({"files": list_desk_files(n)}))
+        if path.startswith("/file/"):
+            n = os.path.basename(path[len("/file/"):])
+            rel = (query.get("path") or [""])[0]
+            if n not in DESKS:
+                return self._send(404, b"unknown desk", "text/plain")
+            ok, content, truncated = read_desk_file(n, rel)
+            if not ok:
+                return self._send(404, json.dumps({"error": content}))
+            return self._send(200, json.dumps({"path": rel, "content": content, "truncated": truncated}))
         if path.startswith("/reports/"):
             fn = os.path.basename(path[len("/reports/"):])
             try:
@@ -1009,6 +1136,23 @@ class Handler(BaseHTTPRequestHandler):
             if not ok:
                 return self._send(400, json.dumps({"error": text}))
             return self._send(200, json.dumps({"ok": True, "text": translate_to_english(text)}))
+
+        if path == "/file":
+            desk = body.get("agent")
+            rel = (body.get("path") or "").strip()
+            content = body.get("content")
+            if desk not in DESKS:
+                return self._send(400, json.dumps({"error": "unknown desk"}))
+            if not rel:
+                return self._send(400, json.dumps({"error": "no file selected"}))
+            if content is None:
+                return self._send(400, json.dumps({"error": "no content"}))
+            if STATE[desk]["status"] in ("seated", "thinking", "working"):
+                return self._send(409, json.dumps({"error": "desk is running - stop it before editing"}))
+            ok, err = write_desk_file(desk, rel, content)
+            if not ok:
+                return self._send(400, json.dumps({"error": err}))
+            return self._send(200, json.dumps({"ok": True}))
 
         if path == "/rename":
             ok, result = rename_agent(body.get("agent"), body.get("name"))
@@ -1219,6 +1363,58 @@ def selftest():
     note = attachment_note([{"path": "/tmp/a.pdf"}, {"path": "/tmp/b.png"}])
     assert "/tmp/a.pdf" in note and "/tmp/b.png" in note
     assert attachment_note([]) == "" and attachment_note(None) == ""
+
+    # --- file explorer / editor (path safety + read/write round-trip) ---
+    assert desk_file_path("desk-1", "../../etc/passwd") is None, "traversal must be blocked"
+    assert desk_file_path("desk-1", "sub/../../../etc/passwd") is None
+    # os.path.join(root, "/etc/passwd") silently discards root (absolute 2nd
+    # arg) - the startswith(root) check downstream must still catch this
+    assert desk_file_path("desk-1", "/etc/passwd") is None
+    assert desk_file_path("nonexistent-desk", "x.txt") is None
+    _wt1 = desk_path("desk-1")
+    os.makedirs(_wt1, exist_ok=True)
+    _sf = os.path.join(_wt1, "selftest_file.txt")
+    try:
+        with open(_sf, "w") as f:
+            f.write("hello\nworld\n")
+        ok, content, truncated = read_desk_file("desk-1", "selftest_file.txt")
+        assert ok and content == "hello\nworld\n" and not truncated
+        ok, err = write_desk_file("desk-1", "selftest_file.txt", "changed\n")
+        assert ok
+        ok, content, _ = read_desk_file("desk-1", "selftest_file.txt")
+        assert content == "changed\n"
+        ok, err = write_desk_file("desk-1", "../outside.txt", "x")
+        assert not ok and "invalid" in err
+        ok, err, _ = read_desk_file("desk-1", "does-not-exist.txt")
+        assert not ok and "not found" in err
+        assert isinstance(list_desk_files("desk-1"), list)
+    finally:
+        if os.path.exists(_sf):
+            os.remove(_sf)
+
+    # --- structured diff parsing (pure text - git already computed the diff) ---
+    _sample_diff = (
+        "diff --git a/foo.py b/foo.py\n"
+        "index e69de29..4b825dc 100644\n"
+        "--- a/foo.py\n"
+        "+++ b/foo.py\n"
+        "@@ -1,2 +1,3 @@\n"
+        " line1\n"
+        "-old line\n"
+        "+new line\n"
+        "+added line\n"
+    )
+    _parsed = parse_unified_diff(_sample_diff)
+    assert len(_parsed) == 1 and _parsed[0]["file"] == "foo.py" and not _parsed[0]["binary"]
+    assert len(_parsed[0]["hunks"]) == 1
+    _lines = _parsed[0]["hunks"][0]["lines"]
+    assert _lines[0] == [" ", "line1"]
+    assert _lines[1] == ["-", "old line"]
+    assert _lines[2] == ["+", "new line"] and _lines[3] == ["+", "added line"]
+    assert isinstance(desk_diff_json("desk-1"), list)
+    # a desk with no worktree yet (git ls-files fails with "No such file or
+    # directory") must not treat that OSError string as a list of filenames
+    assert desk_diff_json("desk-nonexistent-worktree") == []
 
     # --- desk names + rename persistence ---
     assert set(DEFAULT_NAMES) == set(DESKS)

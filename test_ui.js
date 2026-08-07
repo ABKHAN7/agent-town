@@ -42,7 +42,8 @@ const ctx = {
   document: {
     getElementById: get, querySelectorAll: () => [mkEl('a')],
     documentElement: {dataset: {}}, createElement: () => mkEl('toast'),
-    body: mkEl('body'),
+    body: mkEl('body'), activeElement: {tagName: 'BODY', blur(){}},
+    addEventListener(){}, removeEventListener(){},
   },
   getComputedStyle: () => ({getPropertyValue: () => '#fff'}),
   fetch: async () => ({ok: true, json: async () => state}),
@@ -75,5 +76,14 @@ ctx.document.body.appendChild = () => { confettiSpawned++; };
 
   assert.deepStrictEqual(badToasts, [], 'render() silently raised an error toast: ' + badToasts.join(' | '));
 
-  console.log('ui test ok — 20 polls, build() ran only once, confetti-on-done works correctly, no UI-error toasts');
+  // highlightCode() - regex-based tokenizer for the file editor + diff viewer
+  assert.ok(ctx.highlightCode('# a comment').includes('tok-c'), 'line comment should be tokenized');
+  assert.ok(ctx.highlightCode('"a string"').includes('tok-s'), 'string should be tokenized');
+  assert.ok(ctx.highlightCode('def foo():').includes('tok-k'), 'keyword should be tokenized');
+  assert.ok(ctx.highlightCode('x = 42').includes('tok-n'), 'number should be tokenized');
+  assert.strictEqual(ctx.highlightCode('a < b'), 'a &lt; b',
+    'raw < must still be HTML-escaped even with no token match');
+  assert.ok(!ctx.highlightCode('plain text only').includes('<span'), 'plain text needs no spans');
+
+  console.log('ui test ok — 20 polls, build() ran only once, confetti-on-done works correctly, no UI-error toasts, highlightCode ok');
 })();

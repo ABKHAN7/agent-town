@@ -201,16 +201,91 @@ button:disabled{opacity:.4;cursor:default;box-shadow:none}
 #ptask{background:var(--well);border:1.5px solid var(--line);border-radius:10px;padding:9px 11px;
   font-size:12.5px;min-height:52px;white-space:pre-wrap;word-break:break-word}
 #plog{background:var(--well);border:1.5px solid var(--line);border-radius:10px;padding:7px 9px;
-  height:180px;overflow:auto;font-size:11.5px}
+  height:220px;overflow:auto;resize:vertical;font-size:11.5px}
 #plog div{padding:2px 0;border-bottom:1px solid var(--line);display:flex;gap:8px}
 #plog b{color:var(--working);flex:none;min-width:74px}
 #plog s{color:var(--dim);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #pout{grid-column:1/-1}
-#pout pre{background:var(--well);border:1.5px solid var(--line);border-radius:10px;padding:11px;
+#pout pre,.tabpane pre{background:var(--well);border:1.5px solid var(--line);border-radius:10px;padding:11px;
   max-height:340px;overflow:auto;font-size:12.5px;white-space:pre-wrap;word-break:break-word;
   color:var(--ink)}
 .assign{display:flex;gap:8px;margin-top:8px}
 .assign input{flex:1}
+
+/* ---------- tabbed panel (Steps/Files/Diff/Output) ---------- */
+#ptabswrap{grid-column:1/-1}
+.tabs{display:flex;gap:4px;margin-bottom:8px;border-bottom:1.5px solid var(--line)}
+.tab{background:none;box-shadow:none;color:var(--dim);font-weight:700;font-size:11.5px;
+  padding:7px 13px;border-radius:8px 8px 0 0;border:0}
+.tab:hover:not(.active){color:var(--ink);transform:none;filter:none;box-shadow:none;background:var(--well)}
+.tab.active{color:var(--ink);background:var(--well);box-shadow:inset 0 -2px 0 var(--accent)}
+.tabpane{min-height:220px}
+
+/* ---------- terminal-style live steps feed ---------- */
+#plog.term{background:#0c0d12;border-color:var(--edge);font-family:ui-monospace,"DejaVu Sans Mono",monospace}
+:root[data-theme="light"] #plog.term{background:#171923}
+#plog.term div{border-bottom-color:rgba(255,255,255,.07);align-items:baseline}
+#plog.term .ts{color:#5a6270;flex:none;font-size:10px;min-width:50px}
+#plog.term b{color:#8be9fd;min-width:64px}
+#plog.term b.tool-Edit,#plog.term b.tool-Write{color:#ffb86c}
+#plog.term b.tool-Bash{color:#50fa7b}
+#plog.term s{color:#b8c1d9}
+#plog .cursor{display:inline-block;width:7px;height:12px;background:#50fa7b;margin-left:2px;
+  vertical-align:-2px;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* ---------- file browser + inline diff ---------- */
+.filebrowser,.diffview{display:grid;grid-template-columns:190px 1fr;gap:10px;height:280px}
+.filelist{background:var(--well);border:1.5px solid var(--line);border-radius:10px;
+  overflow:auto;resize:vertical;font-size:11.5px}
+.filelist .fnode{padding:5px 10px;cursor:pointer;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;border-left:2px solid transparent}
+.filelist .fnode:hover{background:var(--chip)}
+.filelist .fnode.sel{background:var(--chip);border-left-color:var(--accent);color:var(--ink);font-weight:700}
+.filelist .fempty{padding:10px;color:var(--dim);font-style:italic;font-size:11.5px}
+.fileedit{display:flex;flex-direction:column;gap:6px;min-width:0}
+.fileeditbar{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.fileeditbar button{padding:5px 12px;font-size:11px}
+.filelist .fdir{padding:8px 10px 3px;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--dim);font-weight:700;opacity:.8}
+.filelist .fnode{padding-left:22px}
+
+/* Code editor: a <pre> highlight layer sits behind a transparent-text
+   <textarea> - same font/box so caret position lines up with the colored
+   text underneath. No editor library, ~25-line regex tokenizer below. */
+.codewrap{position:relative;flex:1;min-height:0}
+.codewrap pre,#filecontent{position:absolute;inset:0;margin:0;padding:9px 11px;box-sizing:border-box;
+  font:12px/1.55 ui-monospace,"DejaVu Sans Mono",monospace;white-space:pre;overflow:auto;
+  border:1.5px solid var(--line);border-radius:8px;background:#282a36}
+#filehl{color:#f8f8f2;pointer-events:none}
+#filehl code{white-space:pre}
+#filecontent{background:transparent;color:transparent;caret-color:#f8f8f2;resize:none}
+#filecontent::placeholder{color:#6272a4}
+#filecontent::selection{background:rgba(139,233,253,.35);color:transparent}
+.tok-c{color:#6272a4;font-style:italic} .tok-s{color:#f1fa8c} .tok-t{color:#ff79c6}
+.tok-n{color:#bd93f9} .tok-k{color:#8be9fd;font-weight:700}
+.diffcontent{background:#282a36;color:#f8f8f2;border:1.5px solid var(--line);border-radius:10px;
+  overflow:auto;font-size:12px}
+.dhunk{color:#8892b0;padding:4px 10px;font-size:11px;border-top:1.5px solid #3d3f53}
+.dline{display:flex;white-space:pre;padding:0 8px;font-family:ui-monospace,"DejaVu Sans Mono",monospace}
+.dline.add{background:rgba(80,250,123,.14)}
+.dline.del{background:rgba(255,85,85,.14)}
+.dline .m{flex:none;width:14px;color:#8892b0;user-select:none}
+
+/* ---------- keyboard shortcuts modal ---------- */
+#kbhelp[hidden]{display:none}
+#kbhelp{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:70;display:flex;
+  align-items:center;justify-content:center}
+#kbhelp .card{background:var(--panel);border:1.5px solid var(--line);border-radius:14px;
+  padding:18px 24px;min-width:300px;box-shadow:var(--shadow)}
+#kbhelp h3{margin-bottom:10px;font-size:13px}
+#kbhelp .row{display:flex;justify-content:space-between;gap:18px;font-size:12px;
+  padding:5px 0;color:var(--dim)}
+#kbhelp kbd{background:var(--well);border:1px solid var(--line);border-radius:5px;
+  padding:2px 7px;color:var(--ink);font-size:11px}
+#kbhelpbtn{background:none;border:1.5px solid var(--line);color:var(--dim);padding:5px 10px;
+  border-radius:8px;font-size:13px;cursor:pointer;line-height:1}
+#kbhelpbtn:hover{border-color:var(--accent);color:var(--ink)}
 .brx{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--dim);
   background:var(--well);border:1px solid var(--line);border-radius:8px;padding:4px 8px;cursor:pointer}
 .brx input{margin:0;cursor:pointer}
@@ -331,6 +406,7 @@ input:focus,select:focus{outline:none;border-color:var(--accent);
         <label class="baselabel" title="New work branches from here - stays in sync with your repo">
           🌿 <select id="basebranch"></select></label>
         <button id="themebtn" title="Change theme">🌙</button>
+        <button id="kbhelpbtn" type="button" title="Keyboard shortcuts (?)">⌨️</button>
         <span><i></i><i></i><i></i></span></span></div>
     <div id="people"></div>
     <div class="urgentroom" id="urgentroom">
@@ -426,13 +502,37 @@ Ctrl+V pastes a screenshot/image straight in here. Ctrl+Enter to assign."></text
         <div class="assign"><input id="ptaskin" placeholder="Give this bot a new task…">
           <button id="pgo">Assign</button></div>
       </div>
-      <div class="sec">
-        <h4>Live steps</h4>
-        <div id="plog"></div>
-      </div>
-      <div class="sec" id="pout">
-        <h4>Output <a id="pfile" href="#" target="_blank" hidden style="color:var(--seated)">📄 file</a></h4>
-        <pre id="pouttext">—</pre>
+      <div class="sec" id="ptabswrap">
+        <div class="tabs" role="tablist">
+          <button type="button" class="tab active" data-tab="steps" role="tab" aria-selected="true">Steps</button>
+          <button type="button" class="tab" data-tab="files" role="tab" aria-selected="false">Files</button>
+          <button type="button" class="tab" data-tab="diff" role="tab" aria-selected="false">Diff</button>
+          <button type="button" class="tab" data-tab="output" role="tab" aria-selected="false">Output</button>
+        </div>
+        <div class="tabpane" id="tab-steps"><div id="plog" class="term"></div></div>
+        <div class="tabpane" id="tab-files" hidden>
+          <div class="filebrowser">
+            <div id="filelist" class="filelist"><div class="fempty">— select a desk —</div></div>
+            <div class="fileedit">
+              <div class="fileeditbar"><span id="filepath" class="hint">— pick a file —</span>
+                <button type="button" id="filesave" class="ghost" disabled>💾 Save</button></div>
+              <div class="codewrap">
+                <pre id="filehl" aria-hidden="true"><code></code></pre>
+                <textarea id="filecontent" spellcheck="false" placeholder="Pick a file from the list…" disabled></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="tabpane" id="tab-diff" hidden>
+          <div class="diffview">
+            <div id="difflist" class="filelist"><div class="fempty">— select a desk —</div></div>
+            <div id="diffcontent" class="diffcontent"></div>
+          </div>
+        </div>
+        <div class="tabpane" id="tab-output" hidden>
+          <a id="pfile" href="#" target="_blank" hidden style="color:var(--seated)">📄 full report file</a>
+          <pre id="pouttext">—</pre>
+        </div>
       </div>
       <div class="sec" id="pship">
         <h4>Outcome <span id="pchanged" style="color:var(--dim);font-weight:400"></span></h4>
@@ -450,6 +550,18 @@ Ctrl+V pastes a screenshot/image straight in here. Ctrl+Enter to assign."></text
         </div>
       </div>
     </div>
+  </div>
+</div>
+
+<div id="kbhelp" hidden>
+  <div class="card">
+    <h3>Keyboard shortcuts</h3>
+    <div class="row"><span>Select desk 1–7</span><kbd>1</kbd>–<kbd>7</kbd></div>
+    <div class="row"><span>Focus the task box</span><kbd>/</kbd></div>
+    <div class="row"><span>Switch tab (Steps/Files/Diff/Output)</span><kbd>[</kbd> <kbd>]</kbd></div>
+    <div class="row"><span>Submit assigned task</span><kbd>Ctrl</kbd>+<kbd>Enter</kbd></div>
+    <div class="row"><span>Deselect / close this</span><kbd>Esc</kbd></div>
+    <div class="row"><span>Show this help</span><kbd>?</kbd></div>
   </div>
 </div>
 
@@ -729,7 +841,9 @@ function render(s){
   $('ptaskin').placeholder = `Give ${nameOf(me)} a new task…`;
   const lg = $('plog'), atBottom = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 24;
   lg.innerHTML = (me.log||[]).map(x =>
-    `<div><b>${x.tool}</b><s>${(x.detail||'').replace(/</g,'&lt;')}</s></div>`).join('')
+    `<div><span class="ts">${x.t ? new Date(x.t*1000).toTimeString().slice(0,8) : ''}</span>` +
+    `<b class="tool-${x.tool}">${x.tool}</b><s>${(x.detail||'').replace(/</g,'&lt;')}</s></div>`).join('')
+    + (BUSY.includes(me.status) ? '<div><span class="ts"></span><span class="cursor"></span></div>' : '')
     || '<div style="color:var(--dim)">— no steps yet —</div>';
   if(atBottom) lg.scrollTop = lg.scrollHeight;
   $('pouttext').textContent = me.output || (BUSY.includes(me.status) ? '⏳ running…' : '—');
@@ -830,10 +944,166 @@ async function post(url, body, okMsg){
   }catch(e){ toast(String(e), false); return false; }
   finally{ poll(); }
 }
-$('bdiff').onclick    = () => window.open('/diff/'+sel, '_blank');
+$('bdiff').onclick    = () => switchTab('diff');
 $('breview').onclick  = () => post('/review', {agent: sel}, selName()+' review started');
 $('bdiscard').onclick = () => confirm(selName()+"'s work will be permanently discarded. Are you sure?")
   && post('/discard', {agent: sel}, selName()+"'s work was discarded");
+
+// ---------- tabbed panel (Steps / Files / Diff / Output) ----------
+const TAB_ORDER = ['steps', 'files', 'diff', 'output'];
+let curTab = 'steps';
+function switchTab(name){
+  curTab = name;
+  document.querySelectorAll('.tab').forEach(b => {
+    const on = b.dataset.tab === name;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  document.querySelectorAll('.tabpane').forEach(p => p.hidden = (p.id !== 'tab-'+name));
+  if(name === 'files') loadFiles();
+  if(name === 'diff') loadDiff();
+}
+document.querySelectorAll('.tab').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
+
+function escHtml(s){ return (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+
+// ---------- tiny dependency-free syntax highlighter ----------
+// Not a real tokenizer for any one language - just enough regex-based
+// classification (comments/strings/tags/numbers/keywords) across the
+// Python/XML/JS mix in an Odoo addon to make code *look* like code.
+const HL_KEYWORDS = ['def','class','import','from','return','if','elif','else','for','while','in',
+  'not','and','or','is','None','True','False','self','try','except','finally','with','as','raise',
+  'pass','break','continue','lambda','yield','global','function','const','let','var','new','this',
+  'export','default','async','await','extends','super','typeof','instanceof','of','static'];
+const HL_RE = new RegExp(
+  '(&lt;!--[\\s\\S]*?--&gt;|&lt;!--[\\s\\S]*?-->)' +                 // xml comment (may or may not have &gt;)
+  '|((?:#|//)[^\\n]*)' +                                              // line comment
+  '|(/\\*[\\s\\S]*?\\*/)' +                                           // block comment
+  '|(\'(?:[^\'\\\\\\n]|\\\\.)*\'|"(?:[^"\\\\\\n]|\\\\.)*"|`(?:[^`\\\\]|\\\\.)*`)' + // string
+  '|(&lt;/?[A-Za-z][\\w:.-]*)' +                                      // xml/html tag start
+  '|\\b(\\d+\\.?\\d*)\\b' +                                           // number
+  '|\\b(' + HL_KEYWORDS.join('|') + ')\\b',                           // keyword
+  'g');
+function highlightCode(src){
+  return escHtml(src).replace(HL_RE, (m, xc, lc, bc, str, tag, num, kw) =>
+    xc !== undefined || lc !== undefined || bc !== undefined ? `<span class="tok-c">${m}</span>`
+    : str !== undefined ? `<span class="tok-s">${m}</span>`
+    : tag !== undefined ? `<span class="tok-t">${m}</span>`
+    : num !== undefined ? `<span class="tok-n">${m}</span>`
+    : `<span class="tok-k">${m}</span>`);
+}
+
+// ---------- file explorer + inline editor ----------
+let curFile = null;
+function renderFileList(files, selected){
+  if(!files.length) return '<div class="fempty">— no files yet —</div>';
+  let lastDir = null, html = '';
+  for(const f of files){
+    const idx = f.lastIndexOf('/');
+    const dir = idx === -1 ? '' : f.slice(0, idx), base = idx === -1 ? f : f.slice(idx + 1);
+    if(dir !== lastDir){ html += `<div class="fdir">📁 ${escHtml(dir || '(root)')}</div>`; lastDir = dir; }
+    html += `<div class="fnode${f === selected ? ' sel' : ''}" data-f="${escHtml(f)}">📄 ${escHtml(base)}</div>`;
+  }
+  return html;
+}
+function loadFiles(){
+  const list = $('filelist');
+  if(!sel){ list.innerHTML = '<div class="fempty">— select a desk —</div>'; return; }
+  list.innerHTML = '<div class="fempty">loading…</div>';
+  fetch('/files/'+sel).then(r => r.json()).then(d => {
+    list.innerHTML = renderFileList(d.files || [], curFile);
+    list.querySelectorAll('.fnode').forEach(n => n.onclick = () => openFile(n.dataset.f));
+  }).catch(() => { list.innerHTML = '<div class="fempty">couldn\'t load files</div>'; });
+}
+function syncFileHighlight(){
+  $('filehl').querySelector('code').innerHTML = highlightCode($('filecontent').value);
+}
+function openFile(path){
+  curFile = path;
+  document.querySelectorAll('#filelist .fnode').forEach(n => n.classList.toggle('sel', n.dataset.f === path));
+  $('filepath').textContent = path;
+  $('filecontent').value = 'loading…';
+  $('filecontent').disabled = true;
+  $('filesave').disabled = true;
+  syncFileHighlight();
+  fetch('/file/'+sel+'?path='+encodeURIComponent(path)).then(r => r.json()).then(d => {
+    if(d.error){ $('filecontent').value = ''; syncFileHighlight(); toast(d.error, false); return; }
+    $('filecontent').value = d.content + (d.truncated ? '\n\n… (file is larger, truncated here)' : '');
+    $('filecontent').disabled = false;
+    $('filesave').disabled = false;
+    syncFileHighlight();
+  });
+}
+$('filecontent').addEventListener('input', syncFileHighlight);
+$('filecontent').addEventListener('scroll', () => {
+  $('filehl').scrollTop = $('filecontent').scrollTop;
+  $('filehl').scrollLeft = $('filecontent').scrollLeft;
+});
+$('filesave').onclick = () => {
+  if(!sel || !curFile) return;
+  post('/file', {agent: sel, path: curFile, content: $('filecontent').value}, 'Saved '+curFile);
+};
+
+// ---------- inline diff viewer ----------
+let diffFiles = [];
+function loadDiff(){
+  const list = $('difflist');
+  $('diffcontent').innerHTML = '';
+  if(!sel){ list.innerHTML = '<div class="fempty">— select a desk —</div>'; return; }
+  list.innerHTML = '<div class="fempty">loading…</div>';
+  fetch('/diff-json/'+sel).then(r => r.json()).then(d => {
+    diffFiles = d.files || [];
+    if(!diffFiles.length){ list.innerHTML = '<div class="fempty">— no changes —</div>'; return; }
+    list.innerHTML = diffFiles.map((f, i) => {
+      let add = 0, del = 0;
+      for(const h of f.hunks) for(const [sign] of h.lines){ if(sign === '+') add++; else if(sign === '-') del++; }
+      return `<div class="fnode" data-i="${i}" title="${escHtml(f.file)}">📄 ` +
+        `<span style="color:var(--working)">+${add}</span> <span style="color:var(--error)">-${del}</span> ` +
+        `${escHtml(f.file)}</div>`;
+    }).join('');
+    list.querySelectorAll('.fnode').forEach(n => n.onclick = () => showDiffFile(+n.dataset.i));
+    showDiffFile(0);
+  }).catch(() => { list.innerHTML = '<div class="fempty">couldn\'t load diff</div>'; });
+}
+function showDiffFile(i){
+  document.querySelectorAll('#difflist .fnode').forEach((n, idx) => n.classList.toggle('sel', idx === i));
+  const f = diffFiles[i];
+  const box = $('diffcontent');
+  if(!f){ box.innerHTML = ''; return; }
+  if(f.binary){ box.innerHTML = '<div class="dhunk">binary file changed</div>'; return; }
+  box.innerHTML = f.hunks.map(h =>
+    `<div class="dhunk">${escHtml(h.header)}</div>` +
+    h.lines.map(([sign, text]) =>
+      `<div class="dline ${sign === '+' ? 'add' : sign === '-' ? 'del' : ''}">` +
+      `<span class="m">${sign}</span>${highlightCode(text)}</div>`).join('')
+  ).join('');
+}
+
+// ---------- keyboard shortcuts ----------
+function showKbHelp(show){ $('kbhelp').hidden = !show; }
+$('kbhelpbtn').onclick = () => showKbHelp(true);
+$('kbhelp').onclick = e => { if(e.target.id === 'kbhelp') showKbHelp(false); };
+document.addEventListener('keydown', e => {
+  const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
+  if(e.key === 'Escape'){
+    if(!$('kbhelp').hidden) showKbHelp(false);
+    else if(document.activeElement.blur) document.activeElement.blur();
+    return;
+  }
+  if(typing) return;
+  if(e.key === '?'){ e.preventDefault(); showKbHelp(true); return; }
+  if(e.key === '/'){ e.preventDefault(); $('task').focus(); return; }
+  if(e.key >= '1' && e.key <= '7'){
+    const d = (last.desks || [])[+e.key - 1];
+    if(d) pick(d.agent);
+    return;
+  }
+  if((e.key === '[' || e.key === ']') && sel){
+    e.preventDefault();
+    const i = TAB_ORDER.indexOf(curTab);
+    switchTab(TAB_ORDER[(i + (e.key === ']' ? 1 : -1) + TAB_ORDER.length) % TAB_ORDER.length]);
+  }
+});
 
 const targets = () => [...$('brs').querySelectorAll('input:checked')].map(x => x.value);
 
