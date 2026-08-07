@@ -290,6 +290,12 @@ def ensure_worktree(name):
     branch = "fleet/%s" % name
     os.makedirs(WT, exist_ok=True)
     if not os.path.isdir(os.path.join(path, ".git")) and not os.path.exists(path):
+        # If the wt/ dir was ever deleted by hand (rm -rf) instead of via
+        # `git worktree remove`, PROJECT's .git still thinks this branch's
+        # worktree exists at the old path and refuses to reuse it. Prune
+        # stale registrations first so this self-heals instead of getting
+        # permanently stuck on "already used by worktree".
+        git(["worktree", "prune"])
         rc, out = git(["worktree", "add", "-B", branch, path, BASE])
         if rc != 0:
             return False, out.strip().splitlines()[-1][:160] if out.strip() else "worktree add failed"

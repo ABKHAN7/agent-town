@@ -90,7 +90,7 @@ Everything runs offline/locally — audio never leaves your machine. If you spea
 | `port 8765 already in use` | `FLEET_PORT=8766 python3 fleet.py` |
 | Voice setup fails on cmake | `sudo apt install cmake`, then re-run `bash setup-voice.sh` |
 | Mic button always disabled | Browser may be blocking mic permission — check the lock icon in the address bar |
-| Worktrees look stale/broken | `rm -rf wt` — they're recreated automatically next run |
+| Worktrees look stale/broken | `rm -rf wt` and `git -C /path/to/custom_addons worktree prune` — they're recreated automatically next run. (`fleet.py` also self-heals this on the next task if you forget the `prune` step.) |
 
 ## Daily use
 
