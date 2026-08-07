@@ -1,0 +1,21 @@
+# runtime state
+wt/
+reports/
+uploads/
+names.json.selftest-tmp
+
+# voice input build artifacts
+whisper.cpp/
+.buildenv/
+
+# server logs
+server.log
+
+# python
+__pycache__/
+*.pyc
+
+# editor/OS
+.DS_Store
+.vscode/
+.idea/
