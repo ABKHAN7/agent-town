@@ -49,6 +49,12 @@ const state = {
   },
   conflicts: {},
 };
+let usageHistoryResponse = {history: [
+  {ts: Date.now()/1000 - 90, desk: 'desk-1', name: 'Byte', task: 'add attendance summary',
+   ttype: 'feature', model: 'claude-sonnet-5', tokens: {in: 10, out: 20, cache_read: 100, cache_write: 5}, cost: 0.12},
+]};
+let selfGitResponse = {branch: 'main', remote: 'git@github.com:ABKHAN7/agent-town.git',
+  dirty: [], ahead: 0, behind: 0, last_commit: {hash: 'abc123', subject: 'init', when: '2h ago', author: 'saad'}};
 
 const store = {};
 const ctx = {
@@ -59,7 +65,9 @@ const ctx = {
     addEventListener(){}, removeEventListener(){},
   },
   getComputedStyle: () => ({getPropertyValue: () => '#fff'}),
-  fetch: async () => ({ok: true, json: async () => state}),
+  fetch: async (url) => url.startsWith('/usage-history') ? {ok: true, json: async () => usageHistoryResponse}
+    : url.startsWith('/self-git') ? {ok: true, json: async () => selfGitResponse}
+    : {ok: true, json: async () => state},
   localStorage: {getItem: k => store[k] || null, setItem: (k, v) => { store[k] = v; }},
   setInterval: () => 0, setTimeout: () => 0, clearTimeout(){}, console,
   window: {open(){}}, navigator: {mediaDevices: null, clipboard: {writeText: async () => {}}},
@@ -168,5 +176,33 @@ ctx.document.body.appendChild = () => { confettiSpawned++; };
     'raw < must still be HTML-escaped even with no token match');
   assert.ok(!ctx.highlightCode('plain text only').includes('<span'), 'plain text needs no spans');
 
-  console.log('ui test ok — 20 polls, usage chip + conflict resolver + per-hunk accept render, build() ran only once, confetti-on-done works correctly, no UI-error toasts, highlightCode ok');
+  // --- per-run usage history (opens on the usage chip, fetched separately from /state) ---
+  ctx.showUsage(true);
+  await new Promise(r => setImmediate(r));   // let the loadUsageHistory() fetch/then resolve
+  assert.ok(get('uhistory').innerHTML.includes('add attendance summary'),
+    'the recent-runs table should show the task text for each row');
+  assert.ok(get('uhistory').innerHTML.includes('Byte'), 'row should show which agent ran it');
+  usageHistoryResponse = {history: []};
+  ctx.loadUsageHistory();
+  await new Promise(r => setImmediate(r));
+  assert.ok(get('uhistory').innerHTML.includes('no runs yet'), 'an empty history must say so, not render blank');
+  assert.deepStrictEqual(badToasts, [], 'the history panel raised an error toast: ' + badToasts.join(' | '));
+
+  // --- self-git panel (the dashboard's own repo, separate from desk worktrees) ---
+  assert.ok(get('selfgitchip').innerHTML.includes('main') && get('selfgitchip').innerHTML.includes('clean'),
+    'a clean repo should show "clean" on the chip');
+  assert.strictEqual(get('sgpull').disabled, false, 'pull is allowed on a clean tree even if "behind" is stale');
+  selfGitResponse = {branch: 'dev', remote: 'git@github.com:x/y.git', dirty: ['fleet.py', 'index.html'],
+    ahead: 1, behind: 0, last_commit: {hash: 'def456', subject: 'wip', when: '5m ago', author: 'saad'}};
+  ctx.showSelfGit(true);
+  await new Promise(r => setImmediate(r));
+  assert.ok(get('selfgitchip').innerHTML.includes('2 changed'), 'dirty count should show on the chip');
+  assert.strictEqual(get('sgpull').disabled, true, 'pull must be blocked while there are uncommitted changes');
+  assert.strictEqual(get('sgpush').disabled, false);
+  assert.ok(get('sgdirty').innerHTML.includes('fleet.py') && get('sgdirty').innerHTML.includes('index.html'),
+    'both dirty files should be listed');
+  assert.ok(get('sglast').textContent.includes('def456') && get('sglast').textContent.includes('wip'));
+  assert.deepStrictEqual(badToasts, [], 'the self-git panel raised an error toast: ' + badToasts.join(' | '));
+
+  console.log('ui test ok — 20 polls, usage chip + history + self-git panel + conflict resolver + per-hunk accept render, build() ran only once, confetti-on-done works correctly, no UI-error toasts, highlightCode ok');
 })();

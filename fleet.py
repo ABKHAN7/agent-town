@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -116,6 +117,36 @@ def save_usage():
         pass
 
 
+# ---------------------------------------------------------------- per-run history
+# USAGE above is rolling sums (today/total/per-model) - fine for "how much
+# have I burned", useless for "which task cost me a dollar". This is the
+# same numbers, one row per completed run, so the usage panel can answer
+# that. Capped and trimmed on every write - it's a recent-activity log, not
+# an audit trail.
+HISTORY_FILE = os.path.join(HERE, "usage_history.json")
+HISTORY_MAX = 300
+
+
+def load_history():
+    try:
+        with open(HISTORY_FILE) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+HISTORY = load_history()
+
+
+def save_history():
+    try:
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(HISTORY[-HISTORY_MAX:], f, indent=2)
+    except OSError:
+        pass
+
+
 def event_tokens(usage):
     """The four token buckets out of a stream-json `usage` block.
 
@@ -172,6 +203,14 @@ def track_usage(ev, desk=None):
             m["cost"] += mu.get("costUSD") or 0.0
             m["runs"] += 1
         save_usage()
+        if desk:
+            st = STATE.get(desk) or {}
+            HISTORY.append({"ts": time.time(), "desk": desk, "name": st.get("name") or desk,
+                            "task": (st.get("task") or "")[:120], "ttype": st.get("ttype") or "",
+                            "model": st.get("model") or "", "tokens": tk, "cost": cost,
+                            "turns": ev.get("num_turns") or 0})
+            del HISTORY[:-HISTORY_MAX]
+            save_history()
 
 
 def derive(b):
@@ -1018,6 +1057,114 @@ def last_line(out, fallback):
     return lines[-1][:200] if lines else fallback
 
 
+# ---------------------------------------------------------------- self-git
+# Agent Town's own source (this file, index.html, ...) lives in a plain git
+# checkout at HERE, tracking origin/<branch> on its own repo - completely
+# separate from the per-desk worktrees above, which point at the Odoo
+# project being worked on. This is deliberately simple: one branch, no
+# cherry-picks, no conflict machinery - just add/commit/push/pull, the way
+# anyone would do it by hand, so the dashboard's own development doesn't
+# require leaving the dashboard.
+SELF_TRACKED = ("fleet.py", "index.html", "test_ui.js", "names.json",
+                "README.md", "LICENSE", ".gitignore", "setup-voice.sh")
+
+
+def self_git(args):
+    return git(args, cwd=HERE)
+
+
+def self_branch():
+    rc, out = self_git(["rev-parse", "--abbrev-ref", "HEAD"])
+    return out.strip() if rc == 0 else ""
+
+
+def self_git_status(do_fetch=False):
+    """Everything the git panel needs, one call. Never raises - a repo with
+    no commits yet or no remote just reports empty/zero fields.
+
+    ahead/behind only reflect what was known as of the last `git fetch` -
+    do_fetch=True updates that first (a network round-trip, so callers only
+    ask for it on an explicit check, not on every cheap header-chip poll)."""
+    if do_fetch:
+        self_git(["fetch", "origin"])
+    branch = self_branch()
+    rc, remote_url = self_git(["remote", "get-url", "origin"])
+    rc2, out = self_git(["status", "--porcelain"] + list(SELF_TRACKED))
+    dirty = [l[3:].strip() for l in out.splitlines() if l.strip()] if rc2 == 0 else []
+    rc3, log = self_git(["log", "-1", "--format=%h\x1f%s\x1f%ar\x1f%an"])
+    h, subj, when, author = (log.strip().split("\x1f") + ["", "", "", ""])[:4] if rc3 == 0 and log.strip() else ("", "", "", "")
+    ahead = behind = 0
+    if branch:
+        rc4, counts = self_git(["rev-list", "--left-right", "--count", "HEAD...origin/%s" % branch])
+        parts = counts.split() if rc4 == 0 else []
+        if len(parts) == 2:
+            ahead, behind = int(parts[0]), int(parts[1])
+    return {"branch": branch or "?", "remote": remote_url.strip() if rc == 0 else "",
+            "dirty": dirty, "ahead": ahead, "behind": behind,
+            "last_commit": {"hash": h, "subject": subj, "when": when, "author": author}}
+
+
+def self_default_commit_message():
+    rc, out = self_git(["status", "--porcelain"] + list(SELF_TRACKED))
+    files = [l[3:].strip() for l in out.splitlines() if l.strip()] if rc == 0 else []
+    if not files:
+        return "Update Agent Town"
+    preview = ", ".join(files[:4]) + (" +%d more" % (len(files) - 4) if len(files) > 4 else "")
+    return "Update: %s" % preview
+
+
+def self_commit_and_push(message):
+    """Commit any dirty tracked files (never the .bak/loose files that live
+    alongside them) and push to origin/<current branch>.
+
+    Unlike the desk-ship flow, this does NOT refuse main/master - Agent
+    Town's own repo is small and single-branch, and pushing straight to
+    main is its actual, real workflow (unlike the Odoo project's
+    stage/saad-dev gating, which desk-ship exists to protect)."""
+    branch = self_branch()
+    if not branch:
+        return False, "couldn't determine the current branch"
+    rc, out = self_git(["status", "--porcelain"] + list(SELF_TRACKED))
+    if rc != 0:
+        return False, last_line(out, "git status failed")
+    if out.strip():
+        # explicit pathspecs make `git add` fail outright if even one is
+        # missing (e.g. setup-voice.sh never existed on this checkout) -
+        # only add the ones actually present, same effect either way
+        existing = [f for f in SELF_TRACKED if os.path.isfile(os.path.join(HERE, f))]
+        rc, out = self_git(["add"] + existing) if existing else (0, "")
+        if rc:
+            return False, last_line(out, "git add failed")
+        msg = (message or "").strip() or self_default_commit_message()
+        rc, out = self_git(["commit", "-m", msg])
+        if rc:
+            return False, last_line(out, "git commit failed")
+    rc, ahead_out = self_git(["rev-list", "--count", "origin/%s..HEAD" % branch])
+    if rc == 0 and ahead_out.strip() == "0":
+        return False, "nothing to push - already up to date with origin"
+    rc, out = self_git(["push", "origin", branch])
+    if rc:
+        return False, last_line(out, "git push failed")
+    return True, "pushed to origin/%s" % branch
+
+
+def self_pull():
+    """Fast-forward only - refuses rather than create a surprise merge
+    commit, and refuses while there are uncommitted changes so a pull can
+    never clobber work in progress."""
+    rc, out = self_git(["status", "--porcelain"] + list(SELF_TRACKED))
+    if rc == 0 and out.strip():
+        return False, "commit or discard your changes before pulling"
+    branch = self_branch()
+    rc, out = self_git(["fetch", "origin"])
+    if rc:
+        return False, last_line(out, "git fetch failed")
+    rc, out = self_git(["pull", "--ff-only", "origin", branch] if branch else ["pull", "--ff-only"])
+    if rc:
+        return False, last_line(out, "git pull failed (diverged from origin?)")
+    return True, (last_line(out, "already up to date") + " - restart the server to run the new code")
+
+
 def review_desk(desk):
     """Read-only review of a desk's work by the shipper. Doesn't push anything."""
     task = STATE[desk]["task"] or "(task wasn't recorded)"
@@ -1371,6 +1518,13 @@ class Handler(BaseHTTPRequestHandler):
             if n not in DESKS:
                 return self._send(404, b"unknown desk", "text/plain")
             return self._send(200, json.dumps({"message": default_commit_message(n)}))
+        if path == "/usage-history":
+            with USAGE_LOCK:
+                rows = list(reversed(HISTORY))
+            return self._send(200, json.dumps({"history": rows}))
+        if path == "/self-git":
+            do_fetch = (query.get("fetch") or [""])[0] == "1"
+            return self._send(200, json.dumps(self_git_status(do_fetch=do_fetch)))
         if path.startswith("/files/"):
             n = os.path.basename(path[len("/files/"):])
             if n not in DESKS:
@@ -1571,6 +1725,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, json.dumps({"error": "write a task first"}))
             guess, why = suggest_module(task)
             return self._send(200, json.dumps({"module": guess, "reason": why}))
+
+        if path == "/self-git/push":
+            ok, detail = self_commit_and_push((body.get("message") or "").strip())
+            if not ok:
+                return self._send(409, json.dumps({"error": detail}))
+            return self._send(200, json.dumps({"ok": True, "detail": detail}))
+
+        if path == "/self-git/pull":
+            ok, detail = self_pull()
+            if not ok:
+                return self._send(409, json.dumps({"error": detail}))
+            return self._send(200, json.dumps({"ok": True, "detail": detail}))
 
         if path != "/run":
             return self._send(404, b"nope", "text/plain")
@@ -1897,11 +2063,14 @@ def selftest():
 
     # --- token ledger ---
     _real_usage, _real_usage_file = USAGE, USAGE_FILE
+    _real_history, _real_history_file = HISTORY, HISTORY_FILE
     globals()["USAGE"] = load_usage()
     globals()["USAGE"].update(today=token_bucket(), total=token_bucket(), models={})
     globals()["USAGE_FILE"] = USAGE_FILE + ".selftest-tmp"
+    globals()["HISTORY"] = []
+    globals()["HISTORY_FILE"] = HISTORY_FILE + ".selftest-tmp"
     try:
-        set_("desk-1", tokens={k: 0 for k in TOKEN_KEYS})
+        set_("desk-1", tokens={k: 0 for k in TOKEN_KEYS}, task="add attendance summary", ttype="feature")
         # two assistant turns tick the live counter up
         for _ in range(2):
             track_usage({"type": "assistant", "message": {"usage": {
@@ -1924,17 +2093,33 @@ def selftest():
         assert USAGE["total"]["runs"] == 1 and USAGE["today"]["cost"] == 0.25
         assert USAGE["models"]["claude-haiku-4-5-20251001"]["cache_read"] == 900
 
+        # --- per-run history (the "per task per session" breakdown) ---
+        assert len(HISTORY) == 1, "a completed desk run should append one history row"
+        row = HISTORY[0]
+        assert row["desk"] == "desk-1" and row["task"] == "add attendance summary"
+        assert row["ttype"] == "feature" and row["cost"] == 0.25
+        assert row["tokens"]["out"] == 55, "history should keep this run's own totals, not the ledger's"
+
         # a helper call with no desk still lands in the ledger - these aren't free
         track_usage({"type": "result", "subtype": "success", "total_cost_usd": 0.05,
                      "usage": {"input_tokens": 5, "output_tokens": 5}})
         assert USAGE["total"]["runs"] == 2, "deskless helper calls must be counted"
+        assert len(HISTORY) == 1, "a deskless helper call has no task to attribute - it stays out of history"
 
         d = derive(USAGE["total"])
         assert d["total"] == 20 + 900 + 100 + 55 + 5 + 5
         assert d["cache_hit"] == round(100.0 * 900 / (25 + 900 + 100), 1)
         assert derive(token_bucket())["cache_hit"] == 0.0, "empty ledger must not divide by zero"
+
+        for _ in range(HISTORY_MAX + 5):
+            track_usage({"type": "result", "subtype": "success", "total_cost_usd": 0.01,
+                         "usage": {"input_tokens": 1, "output_tokens": 1}}, "desk-1")
+        assert len(HISTORY) == HISTORY_MAX, "history must stay capped, not grow without bound"
     finally:
+        if os.path.exists(globals()["HISTORY_FILE"]):
+            os.remove(globals()["HISTORY_FILE"])
         globals()["USAGE"], globals()["USAGE_FILE"] = _real_usage, _real_usage_file
+        globals()["HISTORY"], globals()["HISTORY_FILE"] = _real_history, _real_history_file
         set_("desk-1", **blank("desk-1"))
         try:
             os.remove(_real_usage_file + ".selftest-tmp")
@@ -2035,6 +2220,82 @@ def selftest():
         globals()["CONFLICTS_FILE"] = _real_cfile
         CONFLICTS.pop("desk-1", None)
         shutil.rmtree(tmp, ignore_errors=True)
+
+    # --- self-git: an isolated temp repo + temp bare "origin" stand in for
+    # HERE, so this exercises real git add/commit/push/pull without ever
+    # touching the actual dashboard repo or the network. ---
+    tmp2 = tempfile.mkdtemp(prefix="fleet-selftest-selfgit-")
+    ident = ["-c", "user.name=selftest", "-c", "user.email=selftest@local"]
+    try:
+        origin2 = os.path.join(tmp2, "origin.git")
+        assert git(["init", "--bare", "-b", "main", origin2])[0] == 0
+        seed2 = os.path.join(tmp2, "seed")
+        assert git(["clone", origin2, seed2])[0] == 0
+        with open(os.path.join(seed2, "fleet.py"), "w") as f:
+            f.write("# v1\n")
+        git(["add", "-A"], cwd=seed2)
+        git(ident + ["commit", "-m", "init"], cwd=seed2)
+        git(["push", "origin", "HEAD:main"], cwd=seed2)
+        git(["checkout", "-b", "dev"], cwd=seed2)
+        git(["push", "-u", "origin", "dev"], cwd=seed2)
+
+        _real_here = HERE
+        globals()["HERE"] = seed2
+        try:
+            st = self_git_status()
+            assert st["branch"] == "dev" and st["ahead"] == 0 and st["behind"] == 0
+            assert st["dirty"] == [] and st["last_commit"]["subject"] == "init"
+
+            ok, detail = self_commit_and_push("")
+            assert not ok and "up to date" in detail, "a clean, unpushed-nothing repo has nothing to push"
+
+            with open(os.path.join(seed2, "fleet.py"), "w") as f:
+                f.write("# v2 - changed\n")
+            assert self_git_status()["dirty"] == ["fleet.py"]
+            assert self_default_commit_message() == "Update: fleet.py"
+
+            ok, detail = self_commit_and_push("")
+            assert ok and "pushed" in detail, detail
+            assert self_git_status()["dirty"] == [] and self_git_status()["ahead"] == 0
+            landed = git(["log", "-1", "--format=%s", "dev"], cwd=origin2)[1].strip()
+            assert landed == "Update: fleet.py", "the auto-generated message must be what actually landed"
+
+            # pushing straight to main must work here - unlike desk-ship, this
+            # repo has no stage/saad-dev gating, main *is* the real workflow
+            git(["checkout", "main"], cwd=seed2)
+            with open(os.path.join(seed2, "fleet.py"), "w") as f:
+                f.write("# v3\n")
+            ok, detail = self_commit_and_push("")
+            assert ok and "pushed to origin/main" in detail, detail
+            assert git(["log", "-1", "--format=%s", "main"], cwd=origin2)[1].strip() == "Update: fleet.py"
+            git(["checkout", "dev"], cwd=seed2)
+
+            # pull: refuses on dirty, ff-only otherwise
+            with open(os.path.join(seed2, "fleet.py"), "w") as f:
+                f.write("# dirty\n")
+            ok, detail = self_pull()
+            assert not ok and "commit or discard" in detail
+            git(["checkout", "--", "fleet.py"], cwd=seed2)
+
+            # advance origin/dev from a second clone, then pull should fast-forward
+            seed3 = os.path.join(tmp2, "seed3")
+            assert git(["clone", "-b", "dev", origin2, seed3])[0] == 0
+            with open(os.path.join(seed3, "index.html"), "w") as f:
+                f.write("<!-- v2 -->\n")
+            git(["add", "-A"], cwd=seed3)
+            git(ident + ["commit", "-m", "from teammate"], cwd=seed3)
+            git(["push", "origin", "dev"], cwd=seed3)
+
+            assert self_git_status(do_fetch=True)["behind"] == 1
+            ok, detail = self_pull()
+            assert ok and "restart" in detail
+            assert os.path.exists(os.path.join(seed2, "index.html")), \
+                "the fast-forward must actually update the working tree"
+            assert self_git_status()["behind"] == 0
+        finally:
+            globals()["HERE"] = _real_here
+    finally:
+        shutil.rmtree(tmp2, ignore_errors=True)
 
     print("selftest ok")
 
