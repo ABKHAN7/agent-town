@@ -291,6 +291,46 @@ button:disabled{opacity:.4;cursor:default;box-shadow:none}
 #kbhelpbtn{background:none;border:1.5px solid var(--line);color:var(--dim);padding:5px 10px;
   border-radius:8px;font-size:13px;cursor:pointer;line-height:1}
 #kbhelpbtn:hover{border-color:var(--accent);color:var(--ink)}
+
+/* ---------- token usage: wall chip + detail modal ---------- */
+#usagechip{background:none;border:1.5px solid var(--line);color:var(--dim);padding:5px 10px;
+  border-radius:8px;font-size:11px;cursor:pointer;line-height:1.3;white-space:nowrap;
+  font-family:inherit}
+#usagechip:hover{border-color:var(--accent);color:var(--ink)}
+#usagechip b{color:var(--ink);font-weight:600}
+#usage[hidden]{display:none}
+#usage{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:70;display:flex;
+  align-items:center;justify-content:center;padding:16px}
+#usage .card{background:var(--panel);border:1.5px solid var(--line);border-radius:14px;
+  padding:18px 22px;width:min(560px,100%);max-height:88vh;overflow:auto;box-shadow:var(--shadow)}
+#usage h3{margin-bottom:2px;font-size:13px}
+#usage h4{margin:16px 0 7px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;
+  color:var(--dim)}
+#usage .row{display:flex;justify-content:space-between;gap:18px;font-size:12px;
+  padding:4px 0;color:var(--dim)}
+#usage .row b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+#usage .note{font-size:11px;color:var(--dim);line-height:1.55;margin-top:14px;
+  border-top:1px solid var(--line);padding-top:11px}
+#usage table{width:100%;border-collapse:collapse;font-size:11.5px}
+#usage th{text-align:right;color:var(--dim);font-weight:500;padding:4px 0 6px;
+  border-bottom:1px solid var(--line)}
+#usage th:first-child,#usage td:first-child{text-align:left}
+#usage td{text-align:right;padding:5px 0;color:var(--ink);font-variant-numeric:tabular-nums;
+  border-bottom:1px solid var(--line)}
+#usage td:first-child{color:var(--dim)}
+.tokline{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
+
+/* ---------- merge conflict resolver ---------- */
+#pconflict[hidden]{display:none}
+#pconflict h4{color:var(--error)}
+.cfnote{font-size:11.5px;color:var(--dim);line-height:1.6;margin-bottom:10px}
+.cfrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 9px;
+  background:var(--well);border:1px solid var(--line);border-radius:8px;margin-bottom:6px}
+.cfrow .fn{flex:1 1 180px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
+  color:var(--ink);cursor:pointer;text-decoration:underline;text-decoration-style:dotted;
+  overflow-wrap:anywhere}
+.cfrow .fn:hover{color:var(--accent)}
+.cfrow button{padding:4px 9px;font-size:11px}
 .brx{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--dim);
   background:var(--well);border:1px solid var(--line);border-radius:8px;padding:4px 8px;cursor:pointer}
 .brx input{margin:0;cursor:pointer}
@@ -441,6 +481,7 @@ input:focus,select:focus{outline:none;border-color:var(--accent);
       <span style="display:flex;align-items:center;gap:10px">
         <label class="baselabel" title="New work branches from here - stays in sync with your repo">
           🌿 <select id="basebranch"></select></label>
+        <button id="usagechip" type="button" title="Token usage — click for the breakdown">⚡ …</button>
         <button id="themebtn" title="Change theme">🌙</button>
         <button id="kbhelpbtn" type="button" title="Keyboard shortcuts (?)">⌨️</button>
         <span><i></i><i></i><i></i></span></span></div>
@@ -580,6 +621,15 @@ Ctrl+V pastes a screenshot/image straight in here. Ctrl+Enter to assign."></text
           <pre id="pouttext">—</pre>
         </div>
       </div>
+      <div class="sec" id="pconflict" hidden>
+        <h4>⚔️ Merge conflict <span id="cfbranch" style="color:var(--dim);font-weight:400"></span></h4>
+        <div class="cfnote" id="cfnote"></div>
+        <div id="cffiles"></div>
+        <div class="assign" style="margin-top:10px">
+          <button id="cfcontinue">Mark resolved &amp; push</button>
+          <button id="cfabort" class="ghost">Abort this push</button>
+        </div>
+      </div>
       <div class="sec" id="pship">
         <h4>Outcome <span id="pchanged" style="color:var(--dim);font-weight:400"></span></h4>
         <div class="assign">
@@ -609,6 +659,21 @@ Ctrl+V pastes a screenshot/image straight in here. Ctrl+Enter to assign."></text
     <div class="row"><span>Submit assigned task</span><kbd>Ctrl</kbd>+<kbd>Enter</kbd></div>
     <div class="row"><span>Deselect / close this</span><kbd>Esc</kbd></div>
     <div class="row"><span>Show this help</span><kbd>?</kbd></div>
+  </div>
+</div>
+
+<div id="usage" hidden>
+  <div class="card">
+    <h3>Token usage</h3>
+    <div class="tokline" id="uplan"></div>
+    <h4>Today <span id="uday"></span></h4>
+    <div id="utoday"></div>
+    <h4>Since day one</h4>
+    <div id="utotal"></div>
+    <h4>Per model</h4>
+    <table><thead><tr><th>Model</th><th>Runs</th><th>Tokens</th><th>Cached</th><th>Plan usage</th>
+      </tr></thead><tbody id="umodels"></tbody></table>
+    <div class="note" id="unote"></div>
   </div>
 </div>
 
@@ -812,6 +877,8 @@ function render(s){
     voiceBackendReady = s.voice_ready; micLabel();
   }
   $('proj').textContent = s.project;
+  renderUsage(s.usage);
+  renderConflict();
   let seat = 0, busy = 0, me = null, meJustDone = false;
   for(const d of s.desks){
     if(d.status !== 'empty') seat++;
@@ -888,9 +955,15 @@ function render(s){
   $('phead').style.setProperty('--c', getComputedStyle(deskEl).getPropertyValue('--c'));
   $('pwho').textContent = nameOf(me) + (me.urgent ? ' 🚨' : '') + ` (${me.agent})`;
   $('ppill').textContent = me.status;
+  const mt = me.tokens || {};
+  const mtot = (mt.in||0) + (mt.out||0) + (mt.cache_read||0) + (mt.cache_write||0);
   $('pmeta').textContent = me.status === 'empty' ? '' :
-    `${BUSY.includes(me.status) ? ago(me.started)+' elapsed · ' : ''}${me.turns} turns · ≈$${(me.cost||0).toFixed(2)} of plan usage`;
-  $('pmeta').title = "If you're on a subscription (Pro) plan, this isn't an actual charge. "
+    `${BUSY.includes(me.status) ? ago(me.started)+' elapsed · ' : ''}${me.turns} turns · `
+    + `${tk(mtot)} tokens · ≈$${(me.cost||0).toFixed(2)} of plan usage`;
+  $('pmeta').title = me.status === 'empty' ? '' :
+    `This task so far — in ${tk(mt.in)} · out ${tk(mt.out)} · `
+    + `cache read ${tk(mt.cache_read)} · cache written ${tk(mt.cache_write)}.\n`
+    + "If you're on a subscription (Pro) plan, the dollar figure isn't an actual charge. "
     + "It just shows what this would cost at API rates, i.e. how much of your plan limit it used.";
   $('pmodel').hidden = !me.model;
   $('pmodel').textContent = '🧠 ' + (me.model || '');
@@ -1015,6 +1088,34 @@ async function post(url, body, okMsg){
   }catch(e){ toast(String(e), false); return false; }
   finally{ poll(); }
 }
+// ---------- merge conflict resolver ----------
+// The worktree is left mid-cherry-pick on purpose, so the file editor above
+// is already pointed at the exact files that need fixing.
+function renderConflict(){
+  const c = (last.conflicts || {})[sel];
+  $('pconflict').hidden = !c;
+  if(!c) return;
+  $('cfbranch').textContent = '— pushing onto ' + c.branch
+    + (c.pending.length ? ' (then ' + c.pending.join(', ') + ')' : '');
+  $('cfnote').innerHTML = c.files.length
+    ? "Git couldn't merge these on its own. Click a file to fix it by hand in "
+      + "<b>Files</b> (delete the <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code> markers and save), "
+      + "or take one side whole. Then push."
+    : "All conflicts are resolved — push it.";
+  $('cffiles').innerHTML = c.files.map(f => `
+    <div class="cfrow"><span class="fn" data-f="${f}">${f}</span>
+      <button class="ghost" data-take="theirs" data-f="${f}">Keep ${nameOf(last.desks.find(d => d.agent === sel) || {})}'s</button>
+      <button class="ghost" data-take="ours" data-f="${f}">Keep ${c.branch}'s</button>
+    </div>`).join('') || '';
+  $('cffiles').querySelectorAll('.fn').forEach(el =>
+    el.onclick = () => { switchTab('files'); openFile(el.dataset.f); });
+  $('cffiles').querySelectorAll('[data-take]').forEach(el =>
+    el.onclick = () => post('/conflict', {agent: sel, action: el.dataset.take, path: el.dataset.f}));
+}
+$('cfcontinue').onclick = () => post('/conflict', {agent: sel, action: 'continue'});
+$('cfabort').onclick = () => confirm('Abort this push? The work stays on the desk, '
+  + 'nothing goes to the branch.') && post('/conflict', {agent: sel, action: 'abort'});
+
 $('bdiff').onclick    = () => switchTab('diff');
 $('breview').onclick  = () => post('/review', {agent: sel}, selName()+' review started');
 $('bdiscard').onclick = () => confirm(selName()+"'s work will be permanently discarded. Are you sure?")
@@ -1183,12 +1284,64 @@ function showDiffFile(i){
 }
 
 // ---------- keyboard shortcuts ----------
+// ---------- token usage ----------
+// Every number here is measured, straight off each run's final `result`
+// event - nothing is estimated.
+const tk = n => n >= 1e9 ? (n/1e9).toFixed(2)+'B'
+  : n >= 1e6 ? (n/1e6).toFixed(2)+'M'
+  : n >= 1e3 ? (n/1e3).toFixed(1)+'k' : String(n||0);
+const usd = n => '$' + (n||0).toFixed(n < 1 ? 3 : 2);
+
+function bucketRows(b){
+  return `<div class="row"><span>Total tokens</span><b>${tk(b.total)}</b></div>
+    <div class="row"><span>Fresh input / output</span><b>${tk(b.in)} / ${tk(b.out)}</b></div>
+    <div class="row"><span>Cache read / written</span><b>${tk(b.cache_read)} / ${tk(b.cache_write)}</b></div>
+    <div class="row"><span>Cache hit rate</span><b>${b.cache_hit}%</b></div>
+    <div class="row"><span>Runs (tasks + helper calls)</span><b>${b.runs}</b></div>
+    <div class="row"><span>Per run</span><b>${tk(b.per_run)} · ${usd(b.cost_per_run)}</b></div>
+    <div class="row"><span>Plan usage at API rates</span><b>${usd(b.cost)}</b></div>`;
+}
+
+function renderUsage(u){
+  if(!u) return;
+  const t = u.today;
+  $('usagechip').innerHTML = `⚡ <b>${tk(t.total)}</b> today · ${usd(t.cost)} · ${t.cache_hit}% cached`;
+  if($('usage').hidden) return;          // only repaint the modal while it's open
+  $('uday').textContent = '(' + u.day + ')';
+  $('utoday').innerHTML = bucketRows(t);
+  $('utotal').innerHTML = bucketRows(u.total);
+  const rows = Object.entries(u.models);
+  $('umodels').innerHTML = rows.length ? rows.map(([m, b]) =>
+    `<tr><td>${m.replace(/-\d{8}$/, '')}</td><td>${b.runs}</td><td>${tk(b.total)}</td>
+      <td>${b.cache_hit}%</td><td>${usd(b.cost)}</td></tr>`).join('')
+    : '<tr><td colspan="5">nothing yet</td></tr>';
+  const p = u.plan || {};
+  $('uplan').textContent = p.plan
+    ? `${p.plan} plan · signed in with ${p.auth}${p.email ? ' (' + p.email + ')' : ''}`
+    : 'plan unknown — could not read `claude auth status`';
+  $('unote').innerHTML = p.plan && p.auth === 'claude.ai'
+    ? "You're on a <b>subscription</b>, so there is no credit balance to run down and "
+      + "nothing here is an actual charge. <b>Plan usage</b> is what this work would have "
+      + "cost at API rates — it's the honest way to read how much of your plan limit you "
+      + "burned. Claude Code exposes no remaining-quota number, so how much of your 5-hour "
+      + "or weekly window is left has to come from <code>/usage</code> inside Claude Code."
+    : "<b>Plan usage</b> is the cost reported by each run at API rates.";
+}
+
+function showUsage(show){
+  $('usage').hidden = !show;
+  if(show) renderUsage(last.usage);
+}
+$('usagechip').onclick = () => showUsage(true);
+$('usage').onclick = e => { if(e.target.id === 'usage') showUsage(false); };
+
 function showKbHelp(show){ $('kbhelp').hidden = !show; }
 $('kbhelpbtn').onclick = () => showKbHelp(true);
 $('kbhelp').onclick = e => { if(e.target.id === 'kbhelp') showKbHelp(false); };
 document.addEventListener('keydown', e => {
   const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
   if(e.key === 'Escape'){
+    if(!$('usage').hidden) return showUsage(false);
     if(!$('kbhelp').hidden) showKbHelp(false);
     else if(document.activeElement.blur) document.activeElement.blur();
     return;

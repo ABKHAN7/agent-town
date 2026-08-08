@@ -34,7 +34,20 @@ const state = {
   desks: ['desk-1','desk-2','desk-3'].map(a => ({
     agent: a, status: 'empty', tool: '', detail: '', task: '', ttype: '',
     turns: 0, cost: 0, report: null, started: 0, log: [], output: '',
-    branch: 'fleet/' + a, changed: 0})),
+    branch: 'fleet/' + a, changed: 0,
+    tokens: {in: 1000, out: 2000, cache_read: 90000, cache_write: 10000}})),
+  usage: {
+    day: '2026-08-08',
+    today: {in: 1234, out: 5678, cache_read: 2000000, cache_write: 100000,
+            cost: 1.5, runs: 4, total: 2106912, cache_hit: 95.2, per_run: 526728,
+            cost_per_run: 0.375},
+    total: {in: 1234, out: 5678, cache_read: 2000000, cache_write: 100000,
+            cost: 1.5, runs: 4, total: 2106912, cache_hit: 95.2, per_run: 526728,
+            cost_per_run: 0.375},
+    models: {'claude-sonnet-5': {runs: 4, total: 2106912, cache_hit: 95.2, cost: 1.5}},
+    plan: {plan: 'pro', auth: 'claude.ai', email: 'a@b.c'},
+  },
+  conflicts: {},
 };
 
 const store = {};
@@ -77,6 +90,37 @@ ctx.document.body.appendChild = () => { confettiSpawned++; };
 
   assert.deepStrictEqual(badToasts, [], 'render() silently raised an error toast: ' + badToasts.join(' | '));
 
+  // --- token usage chip ---
+  assert.ok(get('usagechip').innerHTML.includes('2.11M'),
+    'usage chip should show today\'s tokens, got: ' + get('usagechip').innerHTML);
+  assert.ok(get('usagechip').innerHTML.includes('95.2%'), 'usage chip should show the cache hit rate');
+  // a state with no usage block at all (older server) must not throw
+  const savedUsage = state.usage; state.usage = undefined;
+  await ctx.poll();
+  state.usage = savedUsage;
+
+  // --- merge conflict resolver ---
+  ctx.pick('desk-1');
+  assert.strictEqual(get('pconflict').hidden, true, 'no conflict -> the section stays hidden');
+  state.conflicts = {'desk-1': {branch: 'stage', sha: 'abc', done: [],
+                                pending: ['saad-dev'], files: ['a/b.py', 'c.xml']}};
+  await ctx.poll();
+  assert.strictEqual(get('pconflict').hidden, false, 'a conflict must reveal the resolver');
+  assert.ok(get('cffiles').innerHTML.includes('a/b.py')
+    && get('cffiles').innerHTML.includes('c.xml'), 'both conflicted files should be listed');
+  assert.ok(get('cfbranch').textContent.includes('stage')
+    && get('cfbranch').textContent.includes('saad-dev'),
+    'the resolver should name the branch being pushed and what is still queued');
+  state.conflicts = {'desk-1': {branch: 'stage', sha: 'abc', done: [], pending: [], files: []}};
+  await ctx.poll();
+  assert.ok(get('cfnote').innerHTML.includes('resolved'),
+    'with every file fixed the resolver should say it is ready to push');
+  state.conflicts = {};
+  await ctx.poll();
+  assert.strictEqual(get('pconflict').hidden, true, 'resolved -> the section hides again');
+
+  assert.deepStrictEqual(badToasts, [], 'the new panels raised an error toast: ' + badToasts.join(' | '));
+
   // highlightCode() - regex-based tokenizer for the file editor + diff viewer
   assert.ok(ctx.highlightCode('# a comment').includes('tok-c'), 'line comment should be tokenized');
   assert.ok(ctx.highlightCode('"a string"').includes('tok-s'), 'string should be tokenized');
@@ -86,5 +130,5 @@ ctx.document.body.appendChild = () => { confettiSpawned++; };
     'raw < must still be HTML-escaped even with no token match');
   assert.ok(!ctx.highlightCode('plain text only').includes('<span'), 'plain text needs no spans');
 
-  console.log('ui test ok — 20 polls, build() ran only once, confetti-on-done works correctly, no UI-error toasts, highlightCode ok');
+  console.log('ui test ok — 20 polls, usage chip + conflict resolver render, build() ran only once, confetti-on-done works correctly, no UI-error toasts, highlightCode ok');
 })();

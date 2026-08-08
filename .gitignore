@@ -3,6 +3,8 @@ wt/
 reports/
 uploads/
 names.json.selftest-tmp
+usage.json
+usage.json.selftest-tmp
 
 # voice input build artifacts
 whisper.cpp/

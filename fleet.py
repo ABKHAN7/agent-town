@@ -75,6 +75,147 @@ def save_names():
         pass
 
 
+# ---------------------------------------------------------------- token ledger
+# Every `claude` call reports exactly what it burned in its final `result`
+# event, so the ledger below is measured, never estimated. It survives a
+# restart in usage.json, same pattern as names.json.
+USAGE_FILE = os.path.join(HERE, "usage.json")
+TOKEN_KEYS = ("in", "out", "cache_read", "cache_write")
+
+
+def token_bucket():
+    b = {k: 0 for k in TOKEN_KEYS}
+    b.update(cost=0.0, runs=0)
+    return b
+
+
+def load_usage():
+    try:
+        with open(USAGE_FILE) as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        saved = {}
+    fields = set(token_bucket())
+    merge = lambda d: dict(token_bucket(), **{k: v for k, v in (d or {}).items()
+                                              if k in fields})
+    return {"day": saved.get("day") or time.strftime("%Y-%m-%d"),
+            "today": merge(saved.get("today")),
+            "total": merge(saved.get("total")),
+            "models": {k: merge(v) for k, v in (saved.get("models") or {}).items()}}
+
+
+USAGE = load_usage()
+USAGE_LOCK = threading.Lock()
+
+
+def save_usage():
+    try:
+        with open(USAGE_FILE, "w") as f:
+            json.dump(USAGE, f, indent=2)
+    except OSError:
+        pass
+
+
+def event_tokens(usage):
+    """The four token buckets out of a stream-json `usage` block.
+
+    Cache reads are billed far cheaper than fresh input, so they are kept
+    apart instead of lumped into one "input" number - the split is the whole
+    point of the efficiency readout. Checked by selftest."""
+    u = usage or {}
+    return {"in": u.get("input_tokens") or 0,
+            "out": u.get("output_tokens") or 0,
+            "cache_read": u.get("cache_read_input_tokens") or 0,
+            "cache_write": u.get("cache_creation_input_tokens") or 0}
+
+
+def track_usage(ev, desk=None):
+    """Fold one stream-json event into the desk's live counters and the
+    fleet ledger.
+
+    Every claude invocation routes through here - including the small helper
+    calls (triage, translate, suggest, review), which are easy to forget but
+    are not free.
+
+    `assistant` events give a live running count while the desk works; the
+    `result` event at the end carries the authoritative total for the whole
+    run, so it replaces the running count rather than adding to it."""
+    t = ev.get("type")
+    if t == "assistant" and desk:
+        tk = event_tokens((ev.get("message") or {}).get("usage"))
+        with LOCK:
+            live = STATE[desk]["tokens"]
+            for k in TOKEN_KEYS:
+                live[k] += tk[k]
+        return
+    if t != "result":
+        return
+    tk = event_tokens(ev.get("usage"))
+    cost = ev.get("total_cost_usd") or 0.0
+    if desk:
+        set_(desk, tokens=tk)
+    today = time.strftime("%Y-%m-%d")
+    with USAGE_LOCK:
+        if USAGE["day"] != today:
+            USAGE["day"], USAGE["today"] = today, token_bucket()
+        for b in (USAGE["today"], USAGE["total"]):
+            for k in TOKEN_KEYS:
+                b[k] += tk[k]
+            b["cost"] += cost
+            b["runs"] += 1
+        for model, mu in (ev.get("modelUsage") or {}).items():
+            m = USAGE["models"].setdefault(model, token_bucket())
+            m["in"] += mu.get("inputTokens") or 0
+            m["out"] += mu.get("outputTokens") or 0
+            m["cache_read"] += mu.get("cacheReadInputTokens") or 0
+            m["cache_write"] += mu.get("cacheCreationInputTokens") or 0
+            m["cost"] += mu.get("costUSD") or 0.0
+            m["runs"] += 1
+        save_usage()
+
+
+def derive(b):
+    """Add the numbers the UI reads off a raw bucket. Checked by selftest."""
+    served = b["in"] + b["cache_read"] + b["cache_write"]
+    b = dict(b, total=served + b["out"])
+    b["cache_hit"] = round(100.0 * b["cache_read"] / served, 1) if served else 0.0
+    b["per_run"] = int(b["total"] / b["runs"]) if b["runs"] else 0
+    b["cost_per_run"] = round(b["cost"] / b["runs"], 4) if b["runs"] else 0.0
+    return b
+
+
+_PLAN = {}
+
+
+def plan_info():
+    """Who is paying, straight from the CLI.
+
+    A claude.ai subscription has no credit balance to report - usage is
+    included in the plan and the CLI exposes no remaining-quota number - so
+    the panel shows the plan and the notional API-rate cost instead of
+    inventing a "credits left" figure."""
+    if _PLAN:
+        return _PLAN
+    try:
+        r = subprocess.run(["claude", "auth", "status"], capture_output=True,
+                           text=True, timeout=20)
+        d = json.loads(r.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return {"plan": "", "auth": "", "email": ""}   # retry on the next poll
+    _PLAN.update({"plan": d.get("subscriptionType") or d.get("apiProvider") or "",
+                  "auth": d.get("authMethod") or "",
+                  "email": d.get("email") or ""})
+    return _PLAN
+
+
+def usage_report():
+    with USAGE_LOCK:
+        u = json.loads(json.dumps(USAGE))
+    return {"day": u["day"], "today": derive(u["today"]), "total": derive(u["total"]),
+            "models": {k: derive(v) for k, v in sorted(u["models"].items())},
+            "plan": plan_info()}
+
+
 # Can be renamed from the UI, so NAMES is mutable (persisted to a JSON file).
 # blank() and /rename both read/write this same dict.
 NAMES = load_names()
@@ -163,7 +304,8 @@ def blank(name):
             "status": "empty", "tool": "", "detail": "", "task": "", "ttype": "",
             "domain": "", "model": "", "ai_urgent": False,
             "turns": 0, "cost": 0.0, "report": None, "started": 0.0,
-            "log": [], "output": "", "branch": "fleet/%s" % name, "changed": 0}
+            "log": [], "output": "", "branch": "fleet/%s" % name, "changed": 0,
+            "tokens": {k: 0 for k in TOKEN_KEYS}}
 
 
 STATE = {n: blank(n) for n in DESKS}
@@ -511,13 +653,15 @@ def run_agent(name, ttype, task, module="", domain="", attachments=None, resume=
         else:
             set_(name, status="seated", task=display_task, ttype=ttype, domain=domain,
                  tool="", detail="deciding on AI model and urgency…",
-                 turns=0, cost=0.0, report=None, started=time.time(), log=[],
+                 turns=0, cost=0.0, tokens={k: 0 for k in TOKEN_KEYS},
+                 report=None, started=time.time(), log=[],
                  output="", changed=0)
             model_key, ai_urgent = triage_task(ttype, task, domain)
 
     set_(name, status="seated", task=display_task, ttype=ttype, domain=domain,
          model=model_key, urgent=urgent, ai_urgent=ai_urgent,
          tool="", detail="preparing worktree", turns=0, cost=0.0, report=None,
+         tokens={k: 0 for k in TOKEN_KEYS},
          started=time.time(), log=[], output="", changed=0)
 
     if not resume:
@@ -554,6 +698,7 @@ def run_agent(name, ttype, task, module="", domain="", attachments=None, resume=
             continue
         if ev.get("type") == "result":
             final = ev.get("result") or ""
+        track_usage(ev, name)
         patch = handle_event(ev)
         if patch:
             set_(name, **patch)
@@ -729,6 +874,7 @@ def translate_to_english(text):
             ev = json.loads(line)
         except ValueError:
             continue
+        track_usage(ev)
         if ev.get("type") == "result":
             answer = (ev.get("result") or "").strip()
     return answer or text
@@ -780,6 +926,7 @@ def suggest_module(task):
             ev = json.loads(line)
         except ValueError:
             continue
+        track_usage(ev)
         if ev.get("type") == "result":
             answer = (ev.get("result") or "").strip()
     guess = answer.splitlines()[0].strip() if answer else ""
@@ -821,6 +968,7 @@ def triage_task(ttype, task, domain):
             ev = json.loads(line)
         except ValueError:
             continue
+        track_usage(ev)
         if ev.get("type") == "result":
             answer = ev.get("result") or ""
     model, urgent = "sonnet", False
@@ -873,7 +1021,8 @@ def review_desk(desk):
     task = STATE[desk]["task"] or "(task wasn't recorded)"
     set_(SHIPPER, status="seated", task="review: %s" % desk, ttype="review",
          tool="", detail="reading the diff", started=time.time(), log=[],
-         output="", turns=0, cost=0.0, reviewed=desk, verdict="")
+         output="", turns=0, cost=0.0, tokens={k: 0 for k in TOKEN_KEYS},
+         reviewed=desk, verdict="")
     cmd = ["claude", "-p", REVIEW_PROMPT.format(task=task),
            "--output-format", "stream-json", "--verbose",
            "--allowedTools", *READ_TOOLS]
@@ -900,6 +1049,7 @@ def review_desk(desk):
             continue
         if ev.get("type") == "result":
             final = ev.get("result") or ""
+        track_usage(ev, SHIPPER)
         patch = handle_event(ev)
         if patch:
             set_(SHIPPER, **patch)
@@ -919,6 +1069,28 @@ def review_desk(desk):
     set_(SHIPPER, output=final or "(no output)", verdict=final or "")
 
 
+# A cherry-pick that hits a conflict is PAUSED here, not aborted - aborting
+# throws away the only place the conflict can actually be resolved, which is
+# what forced people into the terminal. The worktree stays mid-cherry-pick
+# until the user resolves it from the UI (or gives up and aborts).
+CONFLICTS = {}
+
+
+def conflict_files(desk):
+    """Files git left with conflict markers, i.e. unmerged in the index."""
+    rc, out = git(["diff", "--name-only", "--diff-filter=U"], cwd=desk_path(desk))
+    return sorted(f for f in out.splitlines() if f.strip()) if rc == 0 else []
+
+
+def conflict_state(desk):
+    """What the UI needs to render the resolver, or None when there's nothing
+    to resolve. Rebuilds the file list live so it shrinks as files are fixed."""
+    c = CONFLICTS.get(desk)
+    if not c:
+        return None
+    return dict(c, files=conflict_files(desk))
+
+
 def ship_desk(desk, branches, message):
     """Push the worktree's work to every given branch. Python-only git - no
     agent is involved.
@@ -936,6 +1108,8 @@ def ship_desk(desk, branches, message):
     path = desk_path(desk)
     if not os.path.isdir(path):
         return False, "this desk's worktree doesn't exist"
+    if desk in CONFLICTS:
+        return False, "this desk is paused on a merge conflict - resolve it first"
     # A previous ship can stop half way (commit went through, then a
     # cherry-pick failed): the worktree is clean but the commit never landed
     # on a branch. Don't commit again in that case - ship what HEAD already has.
@@ -949,10 +1123,19 @@ def ship_desk(desk, branches, message):
     elif not desk_unpushed(desk):
         return False, "no changes on this desk"
     rc, sha = git(["rev-parse", "HEAD"], cwd=path)
-    sha = sha.strip()
+    return push_branches(desk, sha.strip(), branches, [])
 
-    done, home = [], "fleet/%s" % desk
-    for br in branches:
+
+def push_branches(desk, sha, pending, done):
+    """Cherry-pick `sha` onto each pending branch and push it.
+
+    Split out of ship_desk so a conflict can pause the run and
+    resolve_conflict() can resume this very loop with the branches that are
+    still left."""
+    path, home = desk_path(desk), "fleet/%s" % desk
+    pending = list(pending)
+    while pending:
+        br = pending.pop(0)
         rc, out = git(["fetch", "origin", br], cwd=path)
         if rc:
             git(["checkout", home], cwd=path)
@@ -963,9 +1146,16 @@ def ship_desk(desk, branches, message):
             return False, _partial(done, "%s: checkout failed" % br)
         rc, out = git(["cherry-pick", sha], cwd=path)
         if rc:
-            git(["cherry-pick", "--abort"], cwd=path)
-            git(["checkout", home], cwd=path)
-            return False, _partial(done, "%s: cherry-pick conflict - resolve it by hand (%s)" % (br, path))
+            files = conflict_files(desk)
+            if not files:      # failed for some other reason - nothing to resolve
+                git(["cherry-pick", "--abort"], cwd=path)
+                git(["checkout", home], cwd=path)
+                return False, _partial(done, "%s: cherry-pick failed - %s"
+                                       % (br, last_line(out, "")))
+            CONFLICTS[desk] = {"branch": br, "sha": sha, "done": done,
+                               "pending": pending, "files": files}
+            return False, _partial(done, "%s: %d file(s) conflict - resolve them below"
+                                   % (br, len(files)))
         rc, out = git(["push", "origin", "HEAD:%s" % br], cwd=path)
         if rc:
             git(["checkout", home], cwd=path)
@@ -974,6 +1164,62 @@ def ship_desk(desk, branches, message):
 
     git(["checkout", home], cwd=path)
     return True, "%s -> %s pushed" % (desk, " + ".join("origin/" + b for b in done))
+
+
+def resolve_conflict(desk, action, rel_path=""):
+    """Drive a paused cherry-pick from the UI.
+
+    take-ours / take-theirs are per-file shortcuts for the common case;
+    anything subtler is edited in the file editor, which already writes into
+    this same worktree. "continue" refuses while markers remain, because
+    committing a file with <<<<<<< in it is the one mistake that is painful
+    to undo after the push."""
+    c = CONFLICTS.get(desk)
+    if not c:
+        return False, "no conflict is waiting on this desk"
+    path, home = desk_path(desk), "fleet/%s" % desk
+
+    if action == "abort":
+        git(["cherry-pick", "--abort"], cwd=path)
+        git(["checkout", home], cwd=path)
+        CONFLICTS.pop(desk, None)
+        return True, _partial(c["done"], "conflict aborted - nothing pushed to %s" % c["branch"])
+
+    if action in ("ours", "theirs"):
+        if rel_path not in conflict_files(desk):
+            return False, "that file isn't one of the conflicted ones"
+        # During a cherry-pick "ours" is the target branch and "theirs" is the
+        # desk's own commit - the reverse of what people expect, hence the
+        # UI wording rather than the git wording.
+        rc, out = git(["checkout", "--%s" % action, "--", rel_path], cwd=path)
+        if rc:
+            return False, last_line(out, "could not take that version")
+        rc, out = git(["add", "--", rel_path], cwd=path)
+        if rc:
+            return False, last_line(out, "git add failed")
+        return True, "%s: kept the %s version" % (rel_path,
+                                                  "desk's" if action == "theirs" else "branch's")
+
+    if action != "continue":
+        return False, "unknown action"
+
+    left = conflict_files(desk)
+    if left:
+        return False, "still conflicted: %s" % ", ".join(left[:5])
+    rc, out = git(["add", "-A"], cwd=path)
+    if rc:
+        return False, last_line(out, "git add failed")
+    # core.editor=true: --continue wants to open an editor for the message,
+    # and there is no terminal here to open one in.
+    rc, out = git(["-c", "core.editor=true", "cherry-pick", "--continue"], cwd=path)
+    if rc and "no cherry-pick" not in out.lower():
+        return False, last_line(out, "cherry-pick --continue failed")
+    rc, out = git(["push", "origin", "HEAD:%s" % c["branch"]], cwd=path)
+    if rc:
+        return False, _partial(c["done"], "%s: push failed - %s"
+                               % (c["branch"], last_line(out, "")))
+    CONFLICTS.pop(desk, None)
+    return push_branches(desk, c["sha"], c["pending"], c["done"] + [c["branch"]])
 
 
 def _partial(done, why):
@@ -1021,6 +1267,9 @@ class Handler(BaseHTTPRequestHandler):
                                                "types": types, "project": PROJECT,
                                                "base": BASE, "odoo_version": ODOO_VERSION,
                                                "voice_ready": voice_ready(),
+                                               "usage": usage_report(),
+                                               "conflicts": {d: conflict_state(d)
+                                                             for d in CONFLICTS},
                                                "now": time.time()}))
         if path == "/branches":
             names = list_branches()
@@ -1093,6 +1342,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, json.dumps({"error": "unknown desk"}))
             if STATE[desk]["status"] in ("seated", "thinking", "working"):
                 return self._send(409, json.dumps({"error": "still running"}))
+            if desk in CONFLICTS:
+                # Mid-cherry-pick on a detached HEAD - a bare reset --hard here
+                # leaves the pick half-applied and the desk off its own branch.
+                resolve_conflict(desk, "abort")
             git(["reset", "--hard", BASE], cwd=desk_path(desk))
             git(["clean", "-fd"], cwd=desk_path(desk))
             set_(desk, **blank(desk))
@@ -1208,6 +1461,24 @@ class Handler(BaseHTTPRequestHandler):
             if not ok:
                 return self._send(400, json.dumps({"error": err}))
             return self._send(200, json.dumps({"ok": True}))
+
+        if path == "/conflict":
+            desk = body.get("agent")
+            action = (body.get("action") or "").strip()
+            if desk not in DESKS:
+                return self._send(400, json.dumps({"error": "unknown desk"}))
+            ok, detail = resolve_conflict(desk, action, (body.get("path") or "").strip())
+            if not ok:
+                return self._send(409, json.dumps({"error": detail}))
+            if action in ("ours", "theirs"):
+                return self._send(200, json.dumps({"ok": True, "detail": detail}))
+            # continue/abort end the ship one way or the other - the shipper's
+            # review is spent either way, same as a clean push.
+            if desk not in CONFLICTS:
+                set_(desk, **blank(desk))
+                set_(SHIPPER, reviewed="", verdict="", status="done",
+                     detail=detail, output=detail)
+            return self._send(200, json.dumps({"ok": True, "detail": detail}))
 
         if path == "/rename":
             ok, result = rename_agent(body.get("agent"), body.get("name"))
@@ -1553,6 +1824,121 @@ def selftest():
         assert not ok and "not set up" in err
     finally:
         globals()["WHISPER_BIN"] = _real_bin
+
+    # --- token ledger ---
+    _real_usage, _real_usage_file = USAGE, USAGE_FILE
+    globals()["USAGE"] = load_usage()
+    globals()["USAGE"].update(today=token_bucket(), total=token_bucket(), models={})
+    globals()["USAGE_FILE"] = USAGE_FILE + ".selftest-tmp"
+    try:
+        set_("desk-1", tokens={k: 0 for k in TOKEN_KEYS})
+        # two assistant turns tick the live counter up
+        for _ in range(2):
+            track_usage({"type": "assistant", "message": {"usage": {
+                "input_tokens": 10, "output_tokens": 5,
+                "cache_read_input_tokens": 800, "cache_creation_input_tokens": 200}}},
+                "desk-1")
+        assert STATE["desk-1"]["tokens"]["out"] == 10, "live counter should accumulate"
+        assert USAGE["total"]["runs"] == 0, "assistant events must not touch the ledger"
+
+        track_usage({"type": "result", "subtype": "success", "total_cost_usd": 0.25,
+                     "usage": {"input_tokens": 20, "output_tokens": 55,
+                               "cache_read_input_tokens": 900,
+                               "cache_creation_input_tokens": 100},
+                     "modelUsage": {"claude-haiku-4-5-20251001": {
+                         "inputTokens": 20, "outputTokens": 55,
+                         "cacheReadInputTokens": 900, "cacheCreationInputTokens": 100,
+                         "costUSD": 0.25}}}, "desk-1")
+        assert STATE["desk-1"]["tokens"]["out"] == 55, \
+            "the result total should replace the running count, not add to it"
+        assert USAGE["total"]["runs"] == 1 and USAGE["today"]["cost"] == 0.25
+        assert USAGE["models"]["claude-haiku-4-5-20251001"]["cache_read"] == 900
+
+        # a helper call with no desk still lands in the ledger - these aren't free
+        track_usage({"type": "result", "subtype": "success", "total_cost_usd": 0.05,
+                     "usage": {"input_tokens": 5, "output_tokens": 5}})
+        assert USAGE["total"]["runs"] == 2, "deskless helper calls must be counted"
+
+        d = derive(USAGE["total"])
+        assert d["total"] == 20 + 900 + 100 + 55 + 5 + 5
+        assert d["cache_hit"] == round(100.0 * 900 / (25 + 900 + 100), 1)
+        assert derive(token_bucket())["cache_hit"] == 0.0, "empty ledger must not divide by zero"
+    finally:
+        globals()["USAGE"], globals()["USAGE_FILE"] = _real_usage, _real_usage_file
+        set_("desk-1", **blank("desk-1"))
+        try:
+            os.remove(_real_usage_file + ".selftest-tmp")
+        except OSError:
+            pass
+
+    # --- conflict resolver, end to end against a throwaway repo ---
+    # This one is worth the setup cost: a resolver that pushes a file with
+    # conflict markers still in it is worse than no resolver at all.
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="fleet-selftest-")
+    _real_wt = WT
+    globals()["WT"] = os.path.join(tmp, "wt")
+    os.makedirs(WT)
+    ident = ["-c", "user.name=selftest", "-c", "user.email=selftest@local"]
+    try:
+        origin = os.path.join(tmp, "origin.git")
+        assert git(["init", "--bare", "-b", "stage", origin])[0] == 0
+
+        seed = os.path.join(tmp, "seed")
+        assert git(["clone", origin, seed])[0] == 0
+        with open(os.path.join(seed, "f.txt"), "w") as f:
+            f.write("base\n")
+        git(["add", "-A"], cwd=seed)
+        git(ident + ["commit", "-m", "base"], cwd=seed)
+        git(["push", "origin", "HEAD:stage"], cwd=seed)
+
+        # the desk branches off that base and edits the line
+        desk = os.path.join(WT, "desk-1")
+        assert git(["clone", "-b", "stage", origin, desk])[0] == 0
+        git(["checkout", "-b", "fleet/desk-1"], cwd=desk)
+        with open(os.path.join(desk, "f.txt"), "w") as f:
+            f.write("desk version\n")
+        git(["add", "-A"], cwd=desk)
+        git(ident + ["commit", "-m", "desk change"], cwd=desk)
+        sha = git(["rev-parse", "HEAD"], cwd=desk)[1].strip()
+
+        # meanwhile stage moves on, touching the same line -> guaranteed conflict
+        with open(os.path.join(seed, "f.txt"), "w") as f:
+            f.write("stage version\n")
+        git(["add", "-A"], cwd=seed)
+        git(ident + ["commit", "-m", "stage change"], cwd=seed)
+        git(["push", "origin", "HEAD:stage"], cwd=seed)
+
+        ok, msg = push_branches("desk-1", sha, ["stage"], [])
+        assert not ok and "conflict" in msg, msg
+        assert "desk-1" in CONFLICTS, "the conflict must be left paused, not aborted"
+        assert conflict_files("desk-1") == ["f.txt"], conflict_files("desk-1")
+        assert "<<<<<<<" in open(os.path.join(desk, "f.txt")).read(), \
+            "the working tree must keep the markers so they can be edited"
+
+        ok, msg = resolve_conflict("desk-1", "continue")
+        assert not ok and "still conflicted" in msg, \
+            "continuing with markers left in the file must be refused"
+
+        ok, msg = resolve_conflict("desk-1", "theirs", "f.txt")
+        assert ok, msg
+        assert open(os.path.join(desk, "f.txt")).read() == "desk version\n"
+        assert conflict_files("desk-1") == []
+
+        ok, msg = resolve_conflict("desk-1", "continue")
+        assert ok, msg
+        assert "desk-1" not in CONFLICTS
+        landed = git(["show", "stage:f.txt"], cwd=origin)[1]
+        assert landed.strip() == "desk version", landed
+        assert git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=desk)[1].strip() == "fleet/desk-1", \
+            "the desk must be back on its own branch afterwards"
+
+        assert resolve_conflict("desk-1", "continue")[0] is False, \
+            "resolving twice must not do anything a second time"
+    finally:
+        globals()["WT"] = _real_wt
+        CONFLICTS.pop("desk-1", None)
+        shutil.rmtree(tmp, ignore_errors=True)
 
     print("selftest ok")
 
