@@ -11,7 +11,7 @@ const mkEl = id => ({
     add(c){ this._c.add(c); }, remove(c){ this._c.delete(c); }, contains(c){ return this._c.has(c); }},
   dataset: {a: 'desk-1'}, textContent: '', value: '', hidden: false, disabled: false,
   placeholder: '', className: '', scrollTop: 0, clientHeight: 0, scrollHeight: 0,
-  href: '', onclick: null, onkeydown: null, remove(){}, addEventListener(){},
+  href: '', onclick: null, onkeydown: null, remove(){}, addEventListener(){}, setAttribute(){},
   getBoundingClientRect(){ return {left: 0, top: 0, width: 60, height: 60}; },
   appendChild(){},
   set innerHTML(v){ if(this.id === 'grid') gridWrites++; this._html = v; },
@@ -55,6 +55,10 @@ let usageHistoryResponse = {history: [
 ]};
 let selfGitResponse = {branch: 'main', remote: 'git@github.com:ABKHAN7/agent-town.git',
   dirty: [], ahead: 0, behind: 0, last_commit: {hash: 'abc123', subject: 'init', when: '2h ago', author: 'saad'}};
+let selfGitProjectResponse = {branch: 'saad-dev', remote: 'git@github.com:x/RastgarEngineering.git',
+  dirty: ['website_rastgar/models/x.py'], dirty_count: 1, ahead: 0, behind: 0,
+  last_commit: {hash: 'def789', subject: 'wip', when: '1h ago', author: 'saad_361'},
+  branches: ['main', 'stage', 'saad-dev', 'usama1']};
 
 const store = {};
 const ctx = {
@@ -66,6 +70,7 @@ const ctx = {
   },
   getComputedStyle: () => ({getPropertyValue: () => '#fff'}),
   fetch: async (url) => url.startsWith('/usage-history') ? {ok: true, json: async () => usageHistoryResponse}
+    : url.startsWith('/self-git?repo=project') ? {ok: true, json: async () => selfGitProjectResponse}
     : url.startsWith('/self-git') ? {ok: true, json: async () => selfGitResponse}
     : {ok: true, json: async () => state},
   localStorage: {getItem: k => store[k] || null, setItem: (k, v) => { store[k] = v; }},
@@ -204,5 +209,20 @@ ctx.document.body.appendChild = () => { confettiSpawned++; };
   assert.ok(get('sglast').textContent.includes('def456') && get('sglast').textContent.includes('wip'));
   assert.deepStrictEqual(badToasts, [], 'the self-git panel raised an error toast: ' + badToasts.join(' | '));
 
-  console.log('ui test ok — 20 polls, usage chip + history + self-git panel + conflict resolver + per-hunk accept render, build() ran only once, confetti-on-done works correctly, no UI-error toasts, highlightCode ok');
+  // --- self-git: Project tab (read-only status + branches, no push/pull) ---
+  ctx.switchSelfGitRepo('project');
+  await new Promise(r => setImmediate(r));
+  assert.strictEqual(get('sgpushrow').hidden, true, 'the Project tab must not offer commit/push controls');
+  assert.strictEqual(get('sgbranches').hidden, false, 'the Project tab shows the branch list instead');
+  assert.ok(get('sgbranch').textContent === 'saad-dev');
+  assert.ok(get('sgbranchlist').innerHTML.includes('stage') && get('sgbranchlist').innerHTML.includes('usama1'),
+    "all of the Project's branches should be listed");
+  assert.ok(get('sgdirty').innerHTML.includes('website_rastgar/models/x.py'));
+  ctx.switchSelfGitRepo('self');
+  await new Promise(r => setImmediate(r));
+  assert.strictEqual(get('sgpushrow').hidden, false, 'switching back to Agent Town restores the push controls');
+  assert.strictEqual(get('sgbranches').hidden, true);
+  assert.deepStrictEqual(badToasts, [], 'the Project tab raised an error toast: ' + badToasts.join(' | '));
+
+  console.log('ui test ok — 20 polls, usage chip + history + self-git panel (both repo tabs) + conflict resolver + per-hunk accept render, build() ran only once, confetti-on-done works correctly, no UI-error toasts, highlightCode ok');
 })();

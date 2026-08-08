@@ -365,6 +365,9 @@ button:disabled{opacity:.4;cursor:default;box-shadow:none}
   border-top:1px solid var(--line);padding-top:11px}
 #selfgit #sgmsg{width:100%;margin-top:8px;resize:vertical;font-size:12px}
 #selfgit .assign{margin-top:10px}
+#selfgit .tabs{margin-bottom:12px}
+#sgbranchlist .fnode{cursor:default}
+#sgbranchlist .fnode:hover{background:none}
 
 /* ---------- merge conflict resolver ---------- */
 #pconflict[hidden]{display:none}
@@ -730,17 +733,27 @@ Ctrl+V pastes a screenshot/image straight in here. Ctrl+Enter to assign."></text
 
 <div id="selfgit" hidden>
   <div class="card">
-    <h3>Agent Town's own git status</h3>
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab active" data-repo="self" role="tab" aria-selected="true">Agent Town</button>
+      <button type="button" class="tab" data-repo="project" role="tab" aria-selected="false">Project (custom_addons)</button>
+    </div>
+    <h3 id="sgtitle">Agent Town's own git status</h3>
     <div class="tokline" id="sgremote"></div>
     <div class="row"><span>Branch</span><b id="sgbranch">—</b></div>
     <div class="row"><span>Last commit</span><b id="sglast">—</b></div>
     <div class="row"><span>Ahead / behind origin</span><b id="sgaheadbehind">—</b></div>
     <h4>Uncommitted changes <span id="sgdirtycount" class="tokline" style="display:inline"></span></h4>
     <div id="sgdirty" class="filelist" style="max-height:120px"><div class="fempty">— checking —</div></div>
-    <textarea id="sgmsg" placeholder="Commit message — leave blank for an auto-generated one" rows="2"></textarea>
-    <div class="assign">
-      <button type="button" id="sgpull" class="ghost">⬇ Pull latest</button>
-      <button type="button" id="sgpush">⬆ Commit + Push</button>
+    <div id="sgbranches" hidden>
+      <h4>Branches</h4>
+      <div id="sgbranchlist" class="filelist" style="max-height:140px"></div>
+    </div>
+    <div id="sgpushrow">
+      <textarea id="sgmsg" placeholder="Commit message — leave blank for an auto-generated one" rows="2"></textarea>
+      <div class="assign">
+        <button type="button" id="sgpull" class="ghost">⬇ Pull latest</button>
+        <button type="button" id="sgpush">⬆ Commit + Push</button>
+      </div>
     </div>
     <div class="note" id="sgnote">Only fleet.py/index.html/test_ui.js/names.json and the other tracked
       dashboard files are touched here — never your Odoo repo, never the desk worktrees.</div>
@@ -1529,54 +1542,90 @@ $('usagechip').onclick = () => showUsage(true);
 $('usage').onclick = e => { if(e.target.id === 'usage') showUsage(false); };
 
 // ---------- self-git: the dashboard's own repo, so dev work never has to leave it ----------
-function paintSelfGit(g){
+// Two tabs: "Agent Town" (this checkout - full commit/push/pull) and
+// "Project" (the Odoo repo - read-only status + branch list only, since
+// the dashboard's whole design already keeps its hands off your Project
+// checkout, same as the desk-worktree flow never touching your base branch).
+let sgRepo = 'self', sgCache = {self: null, project: null};
+function paintSelfGitChip(g){
   if(!g) return;
   const dirty = g.dirty || [];
   $('selfgitchip').innerHTML = dirty.length ? `🐙 ${g.branch} · ${dirty.length} changed` : `🐙 ${g.branch} · clean`;
   $('selfgitchip').classList.toggle('dirty', dirty.length > 0);
-  $('selfgitchip').title = `${g.branch}` + (g.ahead ? ` · ${g.ahead} to push` : '')
+  $('selfgitchip').title = `Agent Town: ${g.branch}` + (g.ahead ? ` · ${g.ahead} to push` : '')
     + (g.behind ? ` · ${g.behind} behind origin` : '');
-  if($('selfgit').hidden) return;
+}
+function renderSelfGitPanel(g, repo){
+  if(!g || repo !== sgRepo) return;
+  const dirty = g.dirty || [], count = g.dirty_count != null ? g.dirty_count : dirty.length;
+  const isProject = repo === 'project';
+  $('sgtitle').textContent = isProject ? 'Project (custom_addons) — read-only' : "Agent Town's own git status";
   $('sgremote').textContent = g.remote || '(no remote configured)';
   $('sgbranch').textContent = g.branch;
   const c = g.last_commit || {};
   $('sglast').textContent = c.hash ? `${c.hash} “${c.subject}” · ${c.when}` : '(no commits yet)';
   $('sgaheadbehind').textContent = `${g.ahead || 0} ahead / ${g.behind || 0} behind`;
-  $('sgdirtycount').textContent = dirty.length ? `(${dirty.length})` : '';
+  $('sgdirtycount').textContent = count ? `(${count}${count > dirty.length ? ', showing ' + dirty.length : ''})` : '';
   $('sgdirty').innerHTML = dirty.length
     ? dirty.map(f => `<div class="fnode">${escHtml(f)}</div>`).join('')
     : '<div class="fempty">— clean, nothing to commit —</div>';
-  $('sgpush').disabled = !dirty.length && !g.ahead;
-  $('sgpush').textContent = dirty.length ? '⬆ Commit + Push' : '⬆ Push';
-  // "behind" is only as fresh as the last fetch (the cheap 15s chip refresh
-  // doesn't fetch), so don't gate Pull on it - a stale 0 would wrongly grey
-  // the button out. Only the dirty guard (which the backend also enforces)
-  // is always safe to rely on without a network round-trip.
-  $('sgpull').disabled = dirty.length > 0;
+  $('sgbranches').hidden = !isProject;
+  $('sgpushrow').hidden = isProject;
+  if(isProject){
+    const branches = g.branches || [];
+    $('sgbranchlist').innerHTML = branches.length
+      ? branches.map(b => `<div class="fnode">${escHtml(b)}</div>`).join('')
+      : '<div class="fempty">— no branches found —</div>';
+    $('sgnote').textContent = "Read-only — the dashboard never commits, pushes, or switches branches on your "
+      + "Project checkout, same as it never touches a desk's base branch. Use your terminal or IDE for that.";
+  }else{
+    $('sgpush').disabled = !dirty.length && !g.ahead;
+    $('sgpush').textContent = dirty.length ? '⬆ Commit + Push' : '⬆ Push';
+    // "behind" is only as fresh as the last fetch (the cheap 15s chip refresh
+    // doesn't fetch), so don't gate Pull on it - a stale 0 would wrongly grey
+    // the button out. Only the dirty guard (which the backend also enforces)
+    // is always safe to rely on without a network round-trip.
+    $('sgpull').disabled = dirty.length > 0;
+    $('sgnote').textContent = 'Only fleet.py/index.html/test_ui.js/names.json and the other tracked '
+      + 'dashboard files are touched here — never your Odoo repo, never the desk worktrees.';
+  }
 }
-function loadSelfGit(withFetch){
-  fetch('/self-git' + (withFetch ? '?fetch=1' : '')).then(r => r.json()).then(paintSelfGit).catch(() => {});
+function loadRepoGit(repo, withFetch){
+  fetch(`/self-git?repo=${repo}` + (withFetch ? '&fetch=1' : '')).then(r => r.json()).then(g => {
+    sgCache[repo] = g;
+    if(repo === 'self') paintSelfGitChip(g);
+    renderSelfGitPanel(g, repo);
+  }).catch(() => { if(repo === sgRepo) $('sgdirty').innerHTML = '<div class="fempty">couldn\'t load</div>'; });
 }
+function switchSelfGitRepo(repo){
+  sgRepo = repo;
+  document.querySelectorAll('#selfgit .tab').forEach(b => {
+    const on = b.dataset.repo === repo;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  if(sgCache[repo]) renderSelfGitPanel(sgCache[repo], repo);   // instant paint from cache, no wait
+  loadRepoGit(repo, false);
+  loadRepoGit(repo, true);   // background refresh with an actual fetch (can take a few seconds)
+}
+document.querySelectorAll('#selfgit .tab').forEach(b => b.onclick = () => switchSelfGitRepo(b.dataset.repo));
 function showSelfGit(show){
   $('selfgit').hidden = !show;
-  if(show){
-    loadSelfGit(false);   // paint instantly from local state (branch/dirty/ahead - no network)
-    loadSelfGit(true);    // then refresh "behind" against origin in the background (a git
-  }                        // fetch over the network, can take a few seconds)
+  if(show) switchSelfGitRepo(sgRepo);
 }
 $('selfgitchip').onclick = () => showSelfGit(true);
 $('selfgit').onclick = e => { if(e.target.id === 'selfgit') showSelfGit(false); };
 $('sgpush').onclick = async () => {
   if(!confirm(`Commit and push the dashboard's own changes to origin/${$('sgbranch').textContent}?`)) return;
   const ok = await post('/self-git/push', {message: $('sgmsg').value.trim()}, 'Pushed');
-  if(ok){ $('sgmsg').value = ''; loadSelfGit(true); }
+  if(ok){ $('sgmsg').value = ''; loadRepoGit('self', true); }
 };
 $('sgpull').onclick = async () => {
   const ok = await post('/self-git/pull', {}, 'Pulled — restart the server to run the new code');
-  if(ok) loadSelfGit(true);
+  if(ok) loadRepoGit('self', true);
 };
-loadSelfGit(false);
-setInterval(() => loadSelfGit(false), 15000);   // cheap chip refresh, no fetch/network round-trip
+loadRepoGit('self', false);
+setInterval(() => loadRepoGit('self', false), 15000);   // cheap chip refresh, no fetch/network round-trip
 
 function showKbHelp(show){ $('kbhelp').hidden = !show; }
 $('kbhelpbtn').onclick = () => showKbHelp(true);

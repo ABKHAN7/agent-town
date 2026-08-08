@@ -1078,30 +1078,55 @@ def self_branch():
     return out.strip() if rc == 0 else ""
 
 
-def self_git_status(do_fetch=False):
-    """Everything the git panel needs, one call. Never raises - a repo with
-    no commits yet or no remote just reports empty/zero fields.
+def repo_status(path, tracked=None, do_fetch=False, dirty_cap=50):
+    """Generic git status for any repo - branch/remote/dirty/ahead-behind/
+    last-commit. Never raises - a repo with no commits yet or no remote
+    just reports empty/zero fields.
+
+    tracked=None means "the whole tree" (used for the read-only Project
+    view, which isn't scoped to a curated file list); a tuple restricts to
+    those pathspecs (used for self-git, which only ever touches its own
+    known files). dirty is capped for the response payload; dirty_count is
+    always the true total.
 
     ahead/behind only reflect what was known as of the last `git fetch` -
     do_fetch=True updates that first (a network round-trip, so callers only
     ask for it on an explicit check, not on every cheap header-chip poll)."""
+    def rg(args):
+        return git(args, cwd=path)
     if do_fetch:
-        self_git(["fetch", "origin"])
-    branch = self_branch()
-    rc, remote_url = self_git(["remote", "get-url", "origin"])
-    rc2, out = self_git(["status", "--porcelain"] + list(SELF_TRACKED))
-    dirty = [l[3:].strip() for l in out.splitlines() if l.strip()] if rc2 == 0 else []
-    rc3, log = self_git(["log", "-1", "--format=%h\x1f%s\x1f%ar\x1f%an"])
-    h, subj, when, author = (log.strip().split("\x1f") + ["", "", "", ""])[:4] if rc3 == 0 and log.strip() else ("", "", "", "")
+        rg(["fetch", "origin"])
+    rc, branch = rg(["rev-parse", "--abbrev-ref", "HEAD"])
+    branch = branch.strip() if rc == 0 else ""
+    rc2, remote_url = rg(["remote", "get-url", "origin"])
+    rc3, out = rg(["status", "--porcelain"] + (list(tracked) if tracked else []))
+    dirty_all = [l[3:].strip() for l in out.splitlines() if l.strip()] if rc3 == 0 else []
+    rc4, log = rg(["log", "-1", "--format=%h\x1f%s\x1f%ar\x1f%an"])
+    h, subj, when, author = (log.strip().split("\x1f") + ["", "", "", ""])[:4] if rc4 == 0 and log.strip() else ("", "", "", "")
     ahead = behind = 0
     if branch:
-        rc4, counts = self_git(["rev-list", "--left-right", "--count", "HEAD...origin/%s" % branch])
-        parts = counts.split() if rc4 == 0 else []
+        rc5, counts = rg(["rev-list", "--left-right", "--count", "HEAD...origin/%s" % branch])
+        parts = counts.split() if rc5 == 0 else []
         if len(parts) == 2:
             ahead, behind = int(parts[0]), int(parts[1])
-    return {"branch": branch or "?", "remote": remote_url.strip() if rc == 0 else "",
-            "dirty": dirty, "ahead": ahead, "behind": behind,
+    return {"branch": branch or "?", "remote": remote_url.strip() if rc2 == 0 else "",
+            "dirty": dirty_all[:dirty_cap], "dirty_count": len(dirty_all),
+            "ahead": ahead, "behind": behind,
             "last_commit": {"hash": h, "subject": subj, "when": when, "author": author}}
+
+
+def self_git_status(do_fetch=False):
+    return repo_status(HERE, SELF_TRACKED, do_fetch=do_fetch)
+
+
+def project_git_status(do_fetch=False):
+    """Read-only - the dashboard never commits/pushes/switches branches on
+    the user's own Project checkout, only its own repo and the desk
+    worktrees. This is purely informational (plus the full branch list, for
+    "which branches exist" at a glance)."""
+    st = repo_status(PROJECT, None, do_fetch=do_fetch)
+    st["branches"] = list_all_branches()
+    return st
 
 
 def self_default_commit_message():
@@ -1524,7 +1549,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps({"history": rows}))
         if path == "/self-git":
             do_fetch = (query.get("fetch") or [""])[0] == "1"
-            return self._send(200, json.dumps(self_git_status(do_fetch=do_fetch)))
+            repo = (query.get("repo") or ["self"])[0]
+            report = project_git_status(do_fetch=do_fetch) if repo == "project" \
+                else self_git_status(do_fetch=do_fetch)
+            return self._send(200, json.dumps(report))
         if path.startswith("/files/"):
             n = os.path.basename(path[len("/files/"):])
             if n not in DESKS:
@@ -1839,6 +1867,13 @@ def selftest():
     # list_all_branches() is for the base-branch picker, so main/master ARE allowed there
     assert isinstance(list_all_branches(), list)
     assert set(list_branches()).issubset(set(list_all_branches()))
+
+    # project_git_status() - read-only status of the user's own Project checkout,
+    # never fetched here (no network dependency in a test)
+    pgs = project_git_status()
+    assert isinstance(pgs["branch"], str) and isinstance(pgs["dirty"], list)
+    assert pgs["dirty_count"] >= len(pgs["dirty"]), "dirty_count must be the true total, even when the list is capped"
+    assert pgs["branches"] == list_all_branches()
 
     # review prompt fills in and requires Zero Trust
     rp = REVIEW_PROMPT.format(task="anything")
