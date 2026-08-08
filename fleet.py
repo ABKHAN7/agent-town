@@ -1165,6 +1165,11 @@ def push_branches(desk, sha, pending, done):
         done.append(br)
 
     git(["checkout", home], cwd=path)
+    # The cherry-picked commits get new shas on the target branches, so the
+    # original one on fleet/<desk> would look un-pushed forever and the desk
+    # would never be handed out again. The work is safely on the branches
+    # now, so wind the desk back to a clean base.
+    git(["reset", "--hard", BASE], cwd=path)
     return True, "%s -> %s pushed" % (desk, " + ".join("origin/" + b for b in done))
 
 
@@ -1878,8 +1883,10 @@ def selftest():
     # conflict markers still in it is worse than no resolver at all.
     import tempfile
     tmp = tempfile.mkdtemp(prefix="fleet-selftest-")
-    _real_wt = WT
+    _real_wt, _real_base = WT, BASE
     globals()["WT"] = os.path.join(tmp, "wt")
+    globals()["BASE"] = "stage"        # the throwaway repo's only branch
+
     os.makedirs(WT)
     ident = ["-c", "user.name=selftest", "-c", "user.email=selftest@local"]
     try:
@@ -1934,11 +1941,14 @@ def selftest():
         assert landed.strip() == "desk version", landed
         assert git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=desk)[1].strip() == "fleet/desk-1", \
             "the desk must be back on its own branch afterwards"
+        assert not desk_unpushed("desk-1"), \
+            "after a successful ship the desk must look free - the cherry-pick gets a new " \
+            "sha, so leaving the original on fleet/<desk> would brick the desk forever"
 
         assert resolve_conflict("desk-1", "continue")[0] is False, \
             "resolving twice must not do anything a second time"
     finally:
-        globals()["WT"] = _real_wt
+        globals()["WT"], globals()["BASE"] = _real_wt, _real_base
         CONFLICTS.pop("desk-1", None)
         shutil.rmtree(tmp, ignore_errors=True)
 
