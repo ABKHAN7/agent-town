@@ -998,10 +998,12 @@ def free_desk(urgent=False):
 
 
 REVIEW_PROMPT = (
-    "There is uncommitted work in this worktree. Review it.\n\n"
+    "There is unshipped work in this worktree. Review it.\n\n"
     "The original task that was given: {task}\n\n"
     "Run `git status` and `git diff` to see what changed. New (untracked) "
-    "files won't show up in git diff - read those with Read.\n\n"
+    "files won't show up in git diff - read those with Read. If the working "
+    "tree turns out to be clean, the work is already committed but not yet "
+    "pushed - `git log -p --not --remotes=origin` shows it.\n\n"
     "Pay close attention to the repo's CLAUDE.md Zero Trust policy: no "
     "sudo(), no cr.execute(), no base.group_user in access rights, no "
     "hardcoded user/group assignment in XML data.\n\n"
@@ -1355,7 +1357,7 @@ class Handler(BaseHTTPRequestHandler):
             desk = body.get("agent")
             if desk not in DESKS:
                 return self._send(400, json.dumps({"error": "unknown desk"}))
-            if not desk_dirty(desk):
+            if not desk_dirty(desk) and not desk_unpushed(desk):
                 return self._send(409, json.dumps({"error": "nothing to review on this desk"}))
             if STATE[SHIPPER]["status"] in ("seated", "thinking", "working"):
                 return self._send(409, json.dumps({"error": "shipper is busy right now"}))
@@ -1404,7 +1406,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, json.dumps({"error": "write the new requirement"}))
             if STATE[desk]["status"] in ("seated", "thinking", "working"):
                 return self._send(409, json.dumps({"error": "desk is busy right now"}))
-            if not desk_dirty(desk):
+            if not desk_dirty(desk) and not desk_unpushed(desk):
                 return self._send(409, json.dumps(
                     {"error": "no work on this desk to continue"}))
             threading.Thread(target=run_agent,
