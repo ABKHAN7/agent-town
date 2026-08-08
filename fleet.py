@@ -1075,13 +1075,50 @@ def review_desk(desk):
 # throws away the only place the conflict can actually be resolved, which is
 # what forced people into the terminal. The worktree stays mid-cherry-pick
 # until the user resolves it from the UI (or gives up and aborts).
-CONFLICTS = {}
+#
+# Persisted, because the paused pick outlives this process: git keeps it in
+# the worktree, so a restart that only cleared an in-memory dict would strand
+# the work with no way back to it from the UI.
+CONFLICTS_FILE = os.path.join(HERE, "conflicts.json")
 
 
 def conflict_files(desk):
     """Files git left with conflict markers, i.e. unmerged in the index."""
     rc, out = git(["diff", "--name-only", "--diff-filter=U"], cwd=desk_path(desk))
     return sorted(f for f in out.splitlines() if f.strip()) if rc == 0 else []
+
+
+def cherry_pick_paused(desk):
+    """Is git itself still mid-cherry-pick on this desk? git is the source of
+    truth here; our JSON only remembers the parts git doesn't know (which
+    branch we were pushing onto, and which are still queued)."""
+    rc, _ = git(["rev-parse", "--verify", "--quiet", "CHERRY_PICK_HEAD"],
+                cwd=desk_path(desk))
+    return rc == 0
+
+
+def load_conflicts():
+    """Reload paused conflicts, dropping any that git has since finished or
+    that were aborted from a terminal - a stale entry would block its desk
+    forever."""
+    try:
+        with open(CONFLICTS_FILE) as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return {d: c for d, c in saved.items()
+            if d in DESKS and isinstance(c, dict) and cherry_pick_paused(d)}
+
+
+def save_conflicts():
+    try:
+        with open(CONFLICTS_FILE, "w") as f:
+            json.dump(CONFLICTS, f, indent=2)
+    except OSError:
+        pass
+
+
+CONFLICTS = load_conflicts()
 
 
 CONFLICT_MARKERS = ("<<<<<<<", "=======", ">>>>>>>")
@@ -1173,6 +1210,7 @@ def push_branches(desk, sha, pending, done):
                                        % (br, last_line(out, "")))
             CONFLICTS[desk] = {"branch": br, "sha": sha, "done": done,
                                "pending": pending, "files": files}
+            save_conflicts()
             return False, _partial(done, "%s: %d file(s) conflict - resolve them below"
                                    % (br, len(files)))
         rc, out = git(["push", "origin", "HEAD:%s" % br], cwd=path)
@@ -1207,6 +1245,7 @@ def resolve_conflict(desk, action, rel_path=""):
         git(["cherry-pick", "--abort"], cwd=path)
         git(["checkout", home], cwd=path)
         CONFLICTS.pop(desk, None)
+        save_conflicts()
         return True, _partial(c["done"], "conflict aborted - nothing pushed to %s" % c["branch"])
 
     if action in ("ours", "theirs"):
@@ -1249,6 +1288,7 @@ def resolve_conflict(desk, action, rel_path=""):
         return False, _partial(c["done"], "%s: push failed - %s"
                                % (c["branch"], last_line(out, "")))
     CONFLICTS.pop(desk, None)
+    save_conflicts()
     return push_branches(desk, c["sha"], c["pending"], c["done"] + [c["branch"]])
 
 
@@ -1909,6 +1949,8 @@ def selftest():
     _real_wt, _real_base = WT, BASE
     globals()["WT"] = os.path.join(tmp, "wt")
     globals()["BASE"] = "stage"        # the throwaway repo's only branch
+    _real_cfile = CONFLICTS_FILE
+    globals()["CONFLICTS_FILE"] = os.path.join(tmp, "conflicts.json")
 
     os.makedirs(WT)
     ident = ["-c", "user.name=selftest", "-c", "user.email=selftest@local"]
@@ -1953,6 +1995,13 @@ def selftest():
             "continuing with markers left in the file must be refused"
         assert has_markers("desk-1", "f.txt")
 
+        # A paused pick must survive a restart - git keeps the worktree
+        # mid-cherry-pick, so an in-memory-only dict would strand the work.
+        assert cherry_pick_paused("desk-1")
+        reloaded = load_conflicts()
+        assert reloaded.get("desk-1", {}).get("branch") == "stage", \
+            "the paused conflict must come back after a restart"
+
         ok, msg = resolve_conflict("desk-1", "theirs", "f.txt")
         assert ok, msg
         assert open(os.path.join(desk, "f.txt")).read() == "desk version\n"
@@ -1978,8 +2027,12 @@ def selftest():
 
         assert resolve_conflict("desk-1", "continue")[0] is False, \
             "resolving twice must not do anything a second time"
+        assert not cherry_pick_paused("desk-1")
+        assert load_conflicts() == {}, \
+            "a finished pick must not be reloaded as a stale conflict"
     finally:
         globals()["WT"], globals()["BASE"] = _real_wt, _real_base
+        globals()["CONFLICTS_FILE"] = _real_cfile
         CONFLICTS.pop("desk-1", None)
         shutil.rmtree(tmp, ignore_errors=True)
 
