@@ -59,24 +59,38 @@ let selfGitProjectResponse = {branch: 'saad-dev', remote: 'git@github.com:x/Rast
   dirty: ['website_rastgar/models/x.py'], dirty_count: 1, ahead: 0, behind: 0,
   last_commit: {hash: 'def789', subject: 'wip', when: '1h ago', author: 'saad_361'},
   branches: ['main', 'stage', 'saad-dev', 'usama1']};
+let eventsResponse = {events: [
+  {ts: Date.now()/1000 - 30, kind: 'task_done', desk: 'desk-1', message: 'finished ok', level: 'info'},
+  {ts: Date.now()/1000 - 10, kind: 'ship_error', desk: 'desk-2', message: 'push rejected', level: 'error'},
+]};
 
 const store = {};
+let notifPermission = 'default';
+const notificationsSpawned = [];
+class FakeNotification {
+  constructor(title){ notificationsSpawned.push(title); }
+  static requestPermission(){ notifPermission = 'granted'; return Promise.resolve(notifPermission); }
+  static get permission(){ return notifPermission; }
+}
 const ctx = {
   document: {
     getElementById: get, querySelectorAll: () => [mkEl('a')],
     documentElement: {dataset: {}}, createElement: () => mkEl('toast'),
     body: mkEl('body'), activeElement: {tagName: 'BODY', blur(){}},
     addEventListener(){}, removeEventListener(){},
+    visibilityState: 'hidden', hasFocus: () => false,
   },
   getComputedStyle: () => ({getPropertyValue: () => '#fff'}),
   fetch: async (url) => url.startsWith('/usage-history') ? {ok: true, json: async () => usageHistoryResponse}
     : url.startsWith('/self-git?repo=project') ? {ok: true, json: async () => selfGitProjectResponse}
     : url.startsWith('/self-git') ? {ok: true, json: async () => selfGitResponse}
+    : url.startsWith('/events') ? {ok: true, json: async () => eventsResponse}
     : {ok: true, json: async () => state},
   localStorage: {getItem: k => store[k] || null, setItem: (k, v) => { store[k] = v; }},
   setInterval: () => 0, setTimeout: () => 0, clearTimeout(){}, console,
   window: {open(){}}, navigator: {mediaDevices: null, clipboard: {writeText: async () => {}}},
   confirm: () => false, addEventListener(){}, removeEventListener(){},
+  Notification: FakeNotification,
   Date, Math, JSON, String, Object,
 };
 ctx.window = ctx;
@@ -224,5 +238,34 @@ ctx.document.body.appendChild = () => { confettiSpawned++; };
   assert.strictEqual(get('sgbranches').hidden, true);
   assert.deepStrictEqual(badToasts, [], 'the Project tab raised an error toast: ' + badToasts.join(' | '));
 
-  console.log('ui test ok — 20 polls, usage chip + history + self-git panel (both repo tabs) + conflict resolver + per-hunk accept render, build() ran only once, confetti-on-done works correctly, no UI-error toasts, highlightCode ok');
+  // --- activity log ---
+  ctx.showActivity(true);
+  await new Promise(r => setImmediate(r));
+  assert.ok(get('actrows').innerHTML.includes('finished ok'), 'a normal event should render');
+  assert.ok(get('actrows').innerHTML.includes('push rejected'), 'an error-level event should render too');
+  assert.ok(get('actcount').textContent.includes('2'));
+  eventsResponse = {events: []};
+  ctx.loadActivity();
+  await new Promise(r => setImmediate(r));
+  assert.ok(get('actrows').innerHTML.includes('nothing yet'), 'an empty activity log must say so, not render blank');
+  assert.deepStrictEqual(badToasts, [], 'the activity panel raised an error toast: ' + badToasts.join(' | '));
+
+  // --- desktop notifications ---
+  ctx.paintNotifChip();
+  assert.strictEqual(get('notifchip').textContent, '🔕', 'permission not yet granted -> off icon');
+  ctx.notifyTaskDone('Byte', true);
+  assert.strictEqual(notificationsSpawned.length, 0, 'must not notify before permission is granted');
+  get('notifchip').onclick();
+  await new Promise(r => setImmediate(r));
+  ctx.paintNotifChip();
+  assert.strictEqual(get('notifchip').textContent, '🔔', 'granted permission -> on icon');
+  ctx.notifyTaskDone('Byte', true);
+  assert.strictEqual(notificationsSpawned.length, 1, 'hidden+unfocused tab should get a real notification once granted');
+  assert.ok(notificationsSpawned[0].includes('Byte'));
+  ctx.document.visibilityState = 'visible'; ctx.document.hasFocus = () => true;
+  ctx.notifyTaskDone('Byte', true);
+  assert.strictEqual(notificationsSpawned.length, 1, "already looking at the tab -> no redundant notification");
+  assert.deepStrictEqual(badToasts, [], 'notifications raised an error toast: ' + badToasts.join(' | '));
+
+  console.log('ui test ok — 20 polls, usage chip + history + self-git panel (both repo tabs) + activity log + desktop notifications + conflict resolver + per-hunk accept render, build() ran only once, confetti-on-done works correctly, no UI-error toasts, highlightCode ok');
 })();

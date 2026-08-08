@@ -298,6 +298,26 @@ button:disabled{opacity:.4;cursor:default;box-shadow:none}
 .dline.del{background:rgba(255,85,85,.14)}
 .dline .m{flex:none;width:14px;color:#8892b0;user-select:none}
 
+/* ---------- activity log modal ---------- */
+#activitychip,#notifchip{background:none;border:1.5px solid var(--line);color:var(--dim);
+  padding:5px 10px;border-radius:8px;font-size:13px;cursor:pointer;line-height:1}
+#activitychip:hover,#notifchip:hover{border-color:var(--accent);color:var(--ink)}
+#notifchip.on{border-color:var(--working);color:var(--working)}
+#activity[hidden]{display:none}
+#activity{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:70;display:flex;
+  align-items:center;justify-content:center;padding:16px}
+#activity .card{background:var(--panel);border:1.5px solid var(--line);border-radius:14px;
+  padding:18px 22px;width:min(640px,100%);max-height:88vh;overflow:auto;box-shadow:var(--shadow)}
+#activity h3{margin-bottom:6px;font-size:13px}
+#activity table{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:12px}
+#activity th{text-align:left;color:var(--dim);font-weight:500;padding:4px 8px 6px 0;
+  border-bottom:1px solid var(--line)}
+#activity td{text-align:left;padding:5px 8px 5px 0;color:var(--ink);vertical-align:top;
+  border-bottom:1px solid var(--line)}
+#activity td:first-child{color:var(--dim);white-space:nowrap;font-variant-numeric:tabular-nums}
+#activity tr.lvl-error td{color:var(--error)}
+#activity tr.lvl-error td:first-child{color:var(--error);opacity:.75}
+
 /* ---------- keyboard shortcuts modal ---------- */
 #kbhelp[hidden]{display:none}
 #kbhelp{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:70;display:flex;
@@ -532,6 +552,8 @@ input:focus,select:focus{outline:none;border-color:var(--accent);
           🌿 <select id="basebranch"></select></label>
         <button id="usagechip" type="button" title="Token usage — click for the breakdown">⚡ …</button>
         <button id="selfgitchip" type="button" title="Agent Town's own git status — commit/push/pull without leaving the dashboard">🐙 …</button>
+        <button id="activitychip" type="button" title="Activity log — every task/review/push/pull, across all desks">📜</button>
+        <button id="notifchip" type="button" title="Desktop notifications when a task finishes and this tab isn't focused">🔕</button>
         <button id="themebtn" title="Change theme">🌙</button>
         <button id="kbhelpbtn" type="button" title="Keyboard shortcuts (?)">⌨️</button>
         <span><i></i><i></i><i></i></span></span></div>
@@ -698,6 +720,16 @@ Ctrl+V pastes a screenshot/image straight in here. Ctrl+Enter to assign."></text
         </div>
       </div>
     </div>
+  </div>
+</div>
+
+<div id="activity" hidden>
+  <div class="card">
+    <h3>Activity log <span id="actcount" class="tokline" style="display:inline"></span></h3>
+    <div class="tokline">Every task/review/push/pull/discard across all desks - also written to
+      <code>fleet.log</code> on disk for debugging after the tab is closed.</div>
+    <table><thead><tr><th>When</th><th>Desk</th><th>Event</th><th>Detail</th></tr></thead>
+      <tbody id="actrows"></tbody></table>
   </div>
 </div>
 
@@ -977,6 +1009,7 @@ function render(s){
       burstConfetti(r.left + r.width / 2, r.top + 20);
       toast('🎉 ' + nameOf(d) + "'s work is done — " + d.turns + ' turns');
     }
+    if(justDone) notifyTaskDone(nameOf(d), d.status === 'done');
     const b = el.querySelector('.bubble');
     b.querySelector('b').textContent = d.tool || (d.status==='done' ? '✅ done'
       : d.status==='error' ? '✖ error' : '💭 thinking');
@@ -1595,7 +1628,11 @@ function loadRepoGit(repo, withFetch){
     sgCache[repo] = g;
     if(repo === 'self') paintSelfGitChip(g);
     renderSelfGitPanel(g, repo);
-  }).catch(() => { if(repo === sgRepo) $('sgdirty').innerHTML = '<div class="fempty">couldn\'t load</div>'; });
+    if(repo === 'self') bgWarn('selfgit', true, 'git status');
+  }).catch(() => {
+    if(repo === sgRepo) $('sgdirty').innerHTML = '<div class="fempty">couldn\'t load</div>';
+    if(repo === 'self') bgWarn('selfgit', false, 'git status');
+  });
 }
 function switchSelfGitRepo(repo){
   sgRepo = repo;
@@ -1627,6 +1664,51 @@ $('sgpull').onclick = async () => {
 loadRepoGit('self', false);
 setInterval(() => loadRepoGit('self', false), 15000);   // cheap chip refresh, no fetch/network round-trip
 
+// ---------- activity log (every task/review/push/pull/discard, across all desks) ----------
+function loadActivity(){
+  fetch('/events').then(r => r.json()).then(d => {
+    const rows = d.events || [];
+    $('actcount').textContent = rows.length ? `(${rows.length})` : '';
+    $('actrows').innerHTML = rows.length ? rows.map(e => `
+      <tr class="lvl-${e.level || 'info'}">
+        <td>${escHtml(timeAgo(e.ts))}</td>
+        <td>${escHtml(e.desk || '—')}</td>
+        <td>${escHtml(e.kind)}</td>
+        <td>${escHtml(e.message)}</td>
+      </tr>`).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--dim);font-style:italic">— nothing yet —</td></tr>';
+  }).catch(() => { $('actrows').innerHTML = '<tr><td colspan="4">couldn\'t load activity</td></tr>'; });
+}
+function showActivity(show){
+  $('activity').hidden = !show;
+  if(show) loadActivity();
+}
+$('activitychip').onclick = () => showActivity(true);
+$('activity').onclick = e => { if(e.target.id === 'activity') showActivity(false); };
+
+// ---------- desktop notifications (task finishes while this tab isn't focused) ----------
+function paintNotifChip(){
+  const supported = 'Notification' in window;
+  const on = supported && Notification.permission === 'granted';
+  $('notifchip').textContent = on ? '🔔' : '🔕';
+  $('notifchip').classList.toggle('on', on);
+  $('notifchip').title = !supported ? "This browser doesn't support desktop notifications"
+    : on ? 'Desktop notifications are on for finished tasks'
+    : Notification.permission === 'denied' ? 'Notifications are blocked - enable them in your browser settings'
+    : 'Click to enable a desktop notification when a task finishes';
+}
+$('notifchip').onclick = () => {
+  if(!('Notification' in window)){ toast("this browser doesn't support notifications", false); return; }
+  if(Notification.permission === 'default') Notification.requestPermission().then(paintNotifChip);
+  else paintNotifChip();
+};
+function notifyTaskDone(agentName, ok){
+  if(!('Notification' in window) || Notification.permission !== 'granted') return;
+  if(document.visibilityState === 'visible' && document.hasFocus()) return;   // already looking at it
+  try{ new Notification(ok ? '✅ ' + agentName + ' is done' : '✖ ' + agentName + ' hit an error'); }
+  catch(e){ /* some browsers require a service worker for this - fail quiet, the toast still fires */ }
+}
+paintNotifChip();
+
 function showKbHelp(show){ $('kbhelp').hidden = !show; }
 $('kbhelpbtn').onclick = () => showKbHelp(true);
 $('kbhelp').onclick = e => { if(e.target.id === 'kbhelp') showKbHelp(false); };
@@ -1634,8 +1716,10 @@ document.addEventListener('keydown', e => {
   const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
   if(e.key === 'Escape'){
     if(!$('usage').hidden) return showUsage(false);
-    if(!$('kbhelp').hidden) showKbHelp(false);
-    else if(document.activeElement.blur) document.activeElement.blur();
+    if(!$('selfgit').hidden) return showSelfGit(false);
+    if(!$('activity').hidden) return showActivity(false);
+    if(!$('kbhelp').hidden) return showKbHelp(false);
+    if(document.activeElement.blur) document.activeElement.blur();
     return;
   }
   if(typing) return;
@@ -1655,6 +1739,16 @@ document.addEventListener('keydown', e => {
 
 const targets = () => [...$('brs').querySelectorAll('input:checked')].map(x => x.value);
 
+// Background polls (branches/modules/self-git chip) used to swallow every
+// failure silently, so a broken endpoint could fail forever with zero
+// signal. This toasts once when a poll starts failing and once when it
+// recovers - not on every tick, or a flaky connection would spam.
+const _bgFailing = {};
+function bgWarn(key, ok, label){
+  if(!ok && !_bgFailing[key]){ _bgFailing[key] = true; toast("couldn't refresh " + label, false); }
+  else if(ok && _bgFailing[key]){ _bgFailing[key] = false; toast(label + ' is back'); }
+}
+
 // Branch lists (push targets + base-branch picker) refresh every few seconds
 // instead of once, so they stay in sync as branches are added/removed on the
 // remote - previously-checked boxes are preserved across a refresh.
@@ -1672,7 +1766,8 @@ async function loadBranches(force){
       `<label class="brx"><input type="checkbox" value="${n}"${
         (checked.has(n) || (!checked.size && (b.default||[]).includes(n))) ? ' checked' : ''}> ${n}</label>`).join('')
       || '<span class="zempty">no branches found</span>';
-  }catch(e){ /* retry on the next cycle */ }
+    bgWarn('branches', true, 'branch list');
+  }catch(e){ bgWarn('branches', false, 'branch list'); }
 }
 
 let lastBaseFetch = 0;
@@ -1688,7 +1783,8 @@ async function loadBaseBranches(force){
       `<option value="${n}"${n === current ? ' selected' : ''}>${n}</option>`).join('')
       || '<option value="">no branches found</option>';
     if(!list.includes(current) && b.base) sel2.value = b.base;
-  }catch(e){ /* retry on the next cycle */ }
+    bgWarn('basebranches', true, 'base-branch list');
+  }catch(e){ bgWarn('basebranches', false, 'base-branch list'); }
 }
 $('basebranch').onchange = () => {
   const branch = $('basebranch').value;
@@ -1704,7 +1800,8 @@ async function loadModules(){
     $('module').innerHTML = '<option value="">— choose a module —</option>'
       + (m.modules||[]).map(n => `<option>${n}</option>`).join('');
     modulesReady = true;
-  }catch(e){ /* retry on the next poll */ }
+    bgWarn('modules', true, 'module list');
+  }catch(e){ bgWarn('modules', false, 'module list'); }
 }
 
 $('aisuggest').onclick = async () => {

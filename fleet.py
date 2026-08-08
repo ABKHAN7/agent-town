@@ -6,6 +6,7 @@ without stepping on each other. Run:  python3 fleet.py  ->  http://127.0.0.1:876
 """
 import base64
 import json
+import logging
 import os
 import re
 import shutil
@@ -17,6 +18,7 @@ import time
 import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from logging.handlers import RotatingFileHandler
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.environ.get("FLEET_PROJECT", os.path.expanduser("~/odoo/custom_addons"))
@@ -145,6 +147,57 @@ def save_history():
             json.dump(HISTORY[-HISTORY_MAX:], f, indent=2)
     except OSError:
         pass
+
+
+# ---------------------------------------------------------------- activity log + debug log file
+# Two outputs from one call: an in-UI Activity panel (events.json, capped,
+# same pattern as HISTORY above) and a rotating plain-text log file for
+# debugging after the fact - a crash or a silent failure is otherwise
+# invisible once the browser tab is closed. stdlib logging only, no new
+# dependency: RotatingFileHandler caps the file itself so it never grows
+# unbounded on a server left running for weeks.
+LOG_FILE = os.path.join(HERE, "fleet.log")
+logger = logging.getLogger("agent_town")
+logger.setLevel(logging.INFO)
+if not logger.handlers:  # importing this module twice (e.g. selftest) must not double-log
+    _fh = RotatingFileHandler(LOG_FILE, maxBytes=2_000_000, backupCount=3)
+    _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(_fh)
+
+EVENTS_FILE = os.path.join(HERE, "events.json")
+EVENTS_MAX = 300
+
+
+def load_events():
+    try:
+        with open(EVENTS_FILE) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+EVENTS = load_events()
+EVENTS_LOCK = threading.Lock()
+
+
+def save_events():
+    try:
+        with open(EVENTS_FILE, "w") as f:
+            json.dump(EVENTS[-EVENTS_MAX:], f, indent=2)
+    except OSError:
+        pass
+
+
+def log_event(kind, desk, message, level="info"):
+    """kind is a short machine tag (task_start/task_done/task_error/review/
+    ship/push/pull/discard/...), desk may be None for dashboard-wide events."""
+    getattr(logger, level, logger.info)("[%s] %s: %s" % (kind, desk or "-", message))
+    with EVENTS_LOCK:
+        EVENTS.append({"ts": time.time(), "kind": kind, "desk": desk,
+                       "message": message, "level": level})
+        del EVENTS[:-EVENTS_MAX]
+        save_events()
 
 
 def event_tokens(usage):
@@ -702,11 +755,13 @@ def run_agent(name, ttype, task, module="", domain="", attachments=None, resume=
          tool="", detail="preparing worktree", turns=0, cost=0.0, report=None,
          tokens={k: 0 for k in TOKEN_KEYS},
          started=time.time(), log=[], output="", changed=0)
+    log_event("task_start", name, "%s: %s" % (ttype, display_task[:100]))
 
     if not resume:
         ok, msg = ensure_worktree(name)
         if not ok:
             set_(name, status="error", detail=msg)
+            log_event("task_error", name, "worktree setup failed: %s" % msg, level="error")
             return
 
     cmd = ["claude", "-p", prompt, "--model", MODEL_IDS.get(model_key, MODEL_IDS["sonnet"]),
@@ -722,6 +777,7 @@ def run_agent(name, ttype, task, module="", domain="", attachments=None, resume=
                              stderr=subprocess.PIPE, text=True, bufsize=1)
     except OSError as e:
         set_(name, status="error", detail="claude CLI not found: %s" % e)
+        log_event("task_error", name, "claude CLI not found: %s" % e, level="error")
         return
     with PROC_LOCK:
         PROC[name] = p
@@ -747,6 +803,9 @@ def run_agent(name, ttype, task, module="", domain="", attachments=None, resume=
                     log.append({"t": time.time(), "tool": patch["tool"],
                                 "detail": patch["detail"]})
                     del log[:-60]
+            if patch.get("status") in ("done", "error"):
+                log_event("task_" + patch["status"], name, patch.get("detail") or "",
+                          level="info" if patch["status"] == "done" else "error")
 
     err = (p.stderr.read() or "").strip()
     p.wait()
@@ -759,11 +818,13 @@ def run_agent(name, ttype, task, module="", domain="", attachments=None, resume=
     if was_stopped:
         set_(name, status="stopped", tool="",
              detail="stopped by user - work done so far is preserved in the worktree")
+        log_event("task_stopped", name, "stopped by user")
         return
 
     if p.returncode != 0 and not final:
         tail = err.strip() or "exit %d" % p.returncode
         set_(name, status="error", detail=tail.splitlines()[-1][:120], output=tail[-4000:])
+        log_event("task_error", name, tail.splitlines()[-1][:200], level="error")
         return
 
     os.makedirs(REPORTS, exist_ok=True)
@@ -1235,12 +1296,15 @@ def review_desk(desk):
     STOPPING.discard(SHIPPER)
     if was_stopped:
         set_(SHIPPER, status="stopped", detail="review stopped")
+        log_event("review_stopped", desk, "review stopped by user")
         return
     if pr.returncode != 0 and not final:
         set_(SHIPPER, status="error", detail=last_line(err, "exit %d" % pr.returncode),
              output=err[-4000:])
+        log_event("review_error", desk, last_line(err, "exit %d" % pr.returncode), level="error")
         return
     set_(SHIPPER, output=final or "(no output)", verdict=final or "")
+    log_event("review", desk, (final or "(no output)").splitlines()[0][:150])
 
 
 # A cherry-pick that hits a conflict is PAUSED here, not aborted - aborting
@@ -1547,6 +1611,10 @@ class Handler(BaseHTTPRequestHandler):
             with USAGE_LOCK:
                 rows = list(reversed(HISTORY))
             return self._send(200, json.dumps({"history": rows}))
+        if path == "/events":
+            with EVENTS_LOCK:
+                rows = list(reversed(EVENTS))
+            return self._send(200, json.dumps({"events": rows}))
         if path == "/self-git":
             do_fetch = (query.get("fetch") or [""])[0] == "1"
             repo = (query.get("repo") or ["self"])[0]
@@ -1601,6 +1669,7 @@ class Handler(BaseHTTPRequestHandler):
             git(["reset", "--hard", BASE], cwd=desk_path(desk))
             git(["clean", "-fd"], cwd=desk_path(desk))
             set_(desk, **blank(desk))
+            log_event("discard", desk, "work discarded, worktree reset to " + BASE)
             return self._send(200, json.dumps({"ok": True}))
 
         if path == "/review":
@@ -1628,10 +1697,12 @@ class Handler(BaseHTTPRequestHandler):
                 msg = default_commit_message(desk)
             ok, detail = ship_desk(desk, branches, msg)
             if not ok:
+                log_event("ship_error", desk, detail, level="error")
                 return self._send(409, json.dumps({"error": detail}))
             set_(desk, **blank(desk))
             set_(SHIPPER, reviewed="", verdict="", status="done",
                  detail=detail, output=detail)
+            log_event("ship", desk, "pushed to " + ", ".join(branches) + " - " + detail)
             return self._send(200, json.dumps({"ok": True, "detail": detail}))
 
         if path == "/stop":
@@ -1756,12 +1827,16 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/self-git/push":
             ok, detail = self_commit_and_push((body.get("message") or "").strip())
+            log_event("self_push" if ok else "self_push_error", None, detail,
+                      level="info" if ok else "error")
             if not ok:
                 return self._send(409, json.dumps({"error": detail}))
             return self._send(200, json.dumps({"ok": True, "detail": detail}))
 
         if path == "/self-git/pull":
             ok, detail = self_pull()
+            log_event("self_pull" if ok else "self_pull_error", None, detail,
+                      level="info" if ok else "error")
             if not ok:
                 return self._send(409, json.dumps({"error": detail}))
             return self._send(200, json.dumps({"ok": True, "detail": detail}))
@@ -2099,11 +2174,14 @@ def selftest():
     # --- token ledger ---
     _real_usage, _real_usage_file = USAGE, USAGE_FILE
     _real_history, _real_history_file = HISTORY, HISTORY_FILE
+    _real_events, _real_events_file = EVENTS, EVENTS_FILE
     globals()["USAGE"] = load_usage()
     globals()["USAGE"].update(today=token_bucket(), total=token_bucket(), models={})
     globals()["USAGE_FILE"] = USAGE_FILE + ".selftest-tmp"
     globals()["HISTORY"] = []
     globals()["HISTORY_FILE"] = HISTORY_FILE + ".selftest-tmp"
+    globals()["EVENTS"] = []
+    globals()["EVENTS_FILE"] = EVENTS_FILE + ".selftest-tmp"
     try:
         set_("desk-1", tokens={k: 0 for k in TOKEN_KEYS}, task="add attendance summary", ttype="feature")
         # two assistant turns tick the live counter up
@@ -2150,11 +2228,28 @@ def selftest():
             track_usage({"type": "result", "subtype": "success", "total_cost_usd": 0.01,
                          "usage": {"input_tokens": 1, "output_tokens": 1}}, "desk-1")
         assert len(HISTORY) == HISTORY_MAX, "history must stay capped, not grow without bound"
+
+        # --- activity log / debug log file ---
+        log_event("task_done", "desk-1", "finished ok")
+        log_event("ship_error", "desk-2", "push rejected", level="error")
+        assert len(EVENTS) == 2
+        assert EVENTS[0]["kind"] == "task_done" and EVENTS[0]["desk"] == "desk-1"
+        assert EVENTS[1]["level"] == "error" and EVENTS[1]["message"] == "push rejected"
+        for _ in range(EVENTS_MAX + 5):
+            log_event("task_done", "desk-1", "x")
+        assert len(EVENTS) == EVENTS_MAX, "events must stay capped too"
+        assert os.path.exists(LOG_FILE), "log_event must actually write to the log file"
+        with open(LOG_FILE) as f:
+            assert "[task_done] desk-1: finished ok" in f.read(), \
+                "the log file line must be traceable back to the event that wrote it"
     finally:
         if os.path.exists(globals()["HISTORY_FILE"]):
             os.remove(globals()["HISTORY_FILE"])
+        if os.path.exists(globals()["EVENTS_FILE"]):
+            os.remove(globals()["EVENTS_FILE"])
         globals()["USAGE"], globals()["USAGE_FILE"] = _real_usage, _real_usage_file
         globals()["HISTORY"], globals()["HISTORY_FILE"] = _real_history, _real_history_file
+        globals()["EVENTS"], globals()["EVENTS_FILE"] = _real_events, _real_events_file
         set_("desk-1", **blank("desk-1"))
         try:
             os.remove(_real_usage_file + ".selftest-tmp")
@@ -2344,4 +2439,5 @@ if __name__ == "__main__":
                   "Set it to your Odoo custom_addons checkout, e.g.:\n"
                   "  export FLEET_PROJECT=/path/to/custom_addons" % PROJECT)
     print("Agent Town  ->  http://127.0.0.1:%d   (project: %s, base: %s)" % (PORT, PROJECT, BASE))
+    log_event("server_start", None, "listening on 127.0.0.1:%d, project=%s, base=%s" % (PORT, PROJECT, BASE))
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

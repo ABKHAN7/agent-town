@@ -5,9 +5,11 @@ uploads/
 names.json.selftest-tmp
 usage.json
 usage_history.json
+events.json
 conflicts.json
 usage.json.selftest-tmp
 usage_history.json.selftest-tmp
+events.json.selftest-tmp
 
 # voice input build artifacts
 whisper.cpp/
@@ -15,6 +17,8 @@ whisper.cpp/
 
 # server logs
 server.log
+fleet.log
+fleet.log.*
 
 # python
 __pycache__/
