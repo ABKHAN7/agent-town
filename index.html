@@ -267,6 +267,27 @@ button:disabled{opacity:.4;cursor:default;box-shadow:none}
 #filecontent{background:transparent;color:transparent;caret-color:#f8f8f2;resize:none}
 #filecontent::placeholder{color:#6272a4}
 #filecontent::selection{background:rgba(139,233,253,.35);color:transparent}
+/* ---------- per-hunk conflict resolver, above the editor ---------- */
+#hunks[hidden]{display:none}
+#hunks{display:flex;flex-direction:column;gap:8px;max-height:46%;overflow:auto;
+  padding:2px 2px 4px}
+.hkbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--dim)}
+.hkbar b{color:var(--error)}
+.hkbar .sp{flex:1}
+.hk{border:1.5px solid var(--error);border-radius:9px;overflow:hidden;background:var(--well)}
+.hk.done{border-color:var(--ok,#50fa7b);opacity:.6}
+.hk .hkhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 9px;
+  background:var(--chip);font-size:11px;color:var(--dim)}
+.hk .hkhead b{color:var(--ink)}
+.hk .hkacts{display:flex;gap:6px;flex-wrap:wrap;padding:7px 9px;border-top:1px solid var(--line)}
+.hk .hkacts button{padding:4px 10px;font-size:11px}
+.hk pre{margin:0;padding:7px 9px;font:11.5px/1.5 ui-monospace,"DejaVu Sans Mono",monospace;
+  white-space:pre;overflow-x:auto;color:#f8f8f2;background:#282a36}
+.hk .side{border-top:1px solid var(--line)}
+.hk .sidelbl{padding:4px 9px;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
+  font-weight:700}
+.hk .cur .sidelbl{color:#8be9fd;background:rgba(139,233,253,.10)}
+.hk .inc .sidelbl{color:#50fa7b;background:rgba(80,250,123,.10)}
 .tok-c{color:#6272a4;font-style:italic} .tok-s{color:#f1fa8c} .tok-t{color:#ff79c6}
 .tok-n{color:#bd93f9} .tok-k{color:#8be9fd;font-weight:700}
 .diffcontent{background:#282a36;color:#f8f8f2;border:1.5px solid var(--line);border-radius:10px;
@@ -597,6 +618,7 @@ Ctrl+V pastes a screenshot/image straight in here. Ctrl+Enter to assign."></text
               <div class="fileeditbar"><span id="filepath" class="hint">— pick a file —</span>
                 <span id="filedirty" class="tagchip" hidden>● unsaved</span>
                 <button type="button" id="filesave" class="ghost" disabled>💾 Save</button></div>
+              <div id="hunks" hidden></div>
               <div class="codewrap">
                 <pre id="filehl" aria-hidden="true"><code></code></pre>
                 <textarea id="filecontent" spellcheck="false" placeholder="Pick a file from the list…" disabled></textarea>
@@ -1098,9 +1120,10 @@ function renderConflict(){
   $('cfbranch').textContent = '— pushing onto ' + c.branch
     + (c.pending.length ? ' (then ' + c.pending.join(', ') + ')' : '');
   $('cfnote').innerHTML = c.files.length
-    ? "Git couldn't merge these on its own. Click a file to fix it by hand in "
-      + "<b>Files</b> (delete the <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code> markers and save), "
-      + "or take one side whole. Then push."
+    ? "Git couldn't merge these on its own. <b>Click a file</b> to open it in "
+      + "<b>Files</b>, where each clash gets its own <b>Accept current / Accept incoming "
+      + "/ Accept both</b> — then Save. The buttons here take one whole side instead. "
+      + "Once no file has markers left, push."
     : "All conflicts are resolved — push it.";
   $('cffiles').innerHTML = c.files.map(f => `
     <div class="cfrow"><span class="fn" data-f="${f}">${f}</span>
@@ -1176,6 +1199,7 @@ function resetFileEditor(){
   $('filecontent').value = '';
   $('filecontent').disabled = true;
   $('filesave').disabled = true;
+  $('hunks').hidden = true;
   syncFileHighlight();
 }
 function renderFileList(files, selected){
@@ -1208,6 +1232,93 @@ function loadFiles(){
 function syncFileHighlight(){
   $('filehl').querySelector('code').innerHTML = highlightCode($('filecontent').value);
 }
+
+// ---------- per-hunk conflict resolution ----------
+// Git leaves each clash as <<<<<<< ours / ======= / >>>>>>> theirs. Editing
+// that by hand is exactly the step people get wrong, so every hunk gets the
+// same three choices an editor would give you. Purely textual - the resolved
+// text goes back into the same textarea and through the same Save.
+function parseConflicts(text){
+  const lines = text.split('\n'), out = [];
+  let i = 0;
+  while(i < lines.length){
+    if(!lines[i].startsWith('<<<<<<<')){ i++; continue; }
+    const start = i, curLabel = lines[i].slice(7).trim() || 'current';
+    const cur = [], inc = [];
+    let sep = -1, end = -1;
+    i++;
+    while(i < lines.length && !lines[i].startsWith('=======') && !lines[i].startsWith('<<<<<<<')){ cur.push(lines[i]); i++; }
+    if(i >= lines.length || !lines[i].startsWith('=======')) continue;   // malformed, leave it alone
+    sep = i; i++;
+    while(i < lines.length && !lines[i].startsWith('>>>>>>>')){ inc.push(lines[i]); i++; }
+    if(i >= lines.length) continue;
+    end = i;
+    out.push({start, end, sep, cur, inc, curLabel, incLabel: lines[end].slice(7).trim() || 'incoming'});
+    i++;
+  }
+  return out;
+}
+
+// Replace hunk #n with the given lines, leaving every other hunk untouched.
+function applyHunk(n, lines){
+  const text = $('filecontent').value, all = parseConflicts(text);
+  const h = all[n];
+  if(!h) return;
+  const split = text.split('\n');
+  split.splice(h.start, h.end - h.start + 1, ...lines);
+  $('filecontent').value = split.join('\n');
+  syncFileHighlight();
+  $('filedirty').hidden = !isFileDirty();
+  renderHunks();
+}
+
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const sideBlock = (cls, label, lines) =>
+  `<div class="side ${cls}"><div class="sidelbl">${esc(label)}</div>` +
+  `<pre>${esc(lines.join('\n')) || '<em>(empty)</em>'}</pre></div>`;
+
+function renderHunks(){
+  const hs = parseConflicts($('filecontent').value);
+  $('hunks').hidden = !hs.length;
+  if(!hs.length) return;
+  // During a cherry-pick git's "ours" is the branch being pushed onto and
+  // "theirs" is the desk's own commit - the opposite of what people assume,
+  // so the labels say which is which instead of using git's words.
+  const c = (last.conflicts || {})[sel] || {};
+  const curName = c.branch ? c.branch + "'s version (already on the branch)" : 'Current';
+  const incName = (nameOf(last.desks.find(d => d.agent === sel) || {}) || 'Desk')
+    + "'s version (what you're pushing)";
+  $('hunks').innerHTML =
+    `<div class="hkbar"><b>${hs.length} conflict${hs.length > 1 ? 's' : ''}</b> left in this file`
+    + `<span class="sp"></span>`
+    + `<button class="ghost" data-all="cur">Keep all current</button>`
+    + `<button class="ghost" data-all="inc">Keep all incoming</button></div>`
+    + hs.map((h, n) => `
+      <div class="hk">
+        <div class="hkhead">Conflict <b>${n + 1}</b> of ${hs.length} · line <b>${h.start + 1}</b></div>
+        ${sideBlock('cur', curName, h.cur)}
+        ${sideBlock('inc', incName, h.inc)}
+        <div class="hkacts">
+          <button class="ghost" data-h="${n}" data-take="cur">Accept current</button>
+          <button class="ghost" data-h="${n}" data-take="inc">Accept incoming</button>
+          <button class="ghost" data-h="${n}" data-take="both">Accept both</button>
+        </div>
+      </div>`).join('');
+  $('hunks').querySelectorAll('[data-take]').forEach(el => el.onclick = () => {
+    const h = parseConflicts($('filecontent').value)[+el.dataset.h];
+    if(!h) return;
+    applyHunk(+el.dataset.h, el.dataset.take === 'cur' ? h.cur
+      : el.dataset.take === 'inc' ? h.inc : h.cur.concat(h.inc));
+  });
+  $('hunks').querySelectorAll('[data-all]').forEach(el => el.onclick = () => {
+    // Always resolve the LAST hunk first: earlier line numbers stay valid.
+    const take = el.dataset.all;
+    for(let n = parseConflicts($('filecontent').value).length - 1; n >= 0; n--){
+      const h = parseConflicts($('filecontent').value)[n];
+      applyHunk(n, take === 'cur' ? h.cur : h.inc);
+    }
+  });
+}
 function openFile(path){
   if(path === curFile) return;
   if(isFileDirty() && !confirm('You have unsaved edits in ' + curFile + ' - open a different file and lose them?')) return;
@@ -1226,11 +1337,13 @@ function openFile(path){
     $('filesave').disabled = false;
     originalContent = $('filecontent').value;
     syncFileHighlight();
+    renderHunks();
   });
 }
 $('filecontent').addEventListener('input', () => {
   syncFileHighlight();
   $('filedirty').hidden = !isFileDirty();
+  renderHunks();
 });
 $('filecontent').addEventListener('scroll', () => {
   $('filehl').scrollTop = $('filecontent').scrollTop;

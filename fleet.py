@@ -1084,6 +1084,23 @@ def conflict_files(desk):
     return sorted(f for f in out.splitlines() if f.strip()) if rc == 0 else []
 
 
+CONFLICT_MARKERS = ("<<<<<<<", "=======", ">>>>>>>")
+
+
+def has_markers(desk, rel_path):
+    """Are git's conflict markers still sitting in this file? Checked by
+    selftest - committing a file with <<<<<<< in it is the one mistake that
+    is painful to undo after the push."""
+    target = desk_file_path(desk, rel_path)
+    if not target or not os.path.isfile(target):
+        return False
+    try:
+        with open(target, encoding="utf-8", errors="replace") as f:
+            return any(line.startswith(CONFLICT_MARKERS) for line in f)
+    except OSError:
+        return False
+
+
 def conflict_state(desk):
     """What the UI needs to render the resolver, or None when there's nothing
     to resolve. Rebuilds the file list live so it shrinks as files are fixed."""
@@ -1210,12 +1227,18 @@ def resolve_conflict(desk, action, rel_path=""):
     if action != "continue":
         return False, "unknown action"
 
-    left = conflict_files(desk)
+    # Editing a file in the UI clears the markers but leaves the index entry
+    # unmerged - only `git add` clears that. So the gate is the markers in the
+    # working tree, not the index, and the add comes after.
+    left = [f for f in c["files"] if has_markers(desk, f)]
     if left:
-        return False, "still conflicted: %s" % ", ".join(left[:5])
+        return False, "conflict markers are still in: %s" % ", ".join(left[:5])
     rc, out = git(["add", "-A"], cwd=path)
     if rc:
         return False, last_line(out, "git add failed")
+    still = conflict_files(desk)
+    if still:
+        return False, "git still calls these unmerged: %s" % ", ".join(still[:5])
     # core.editor=true: --continue wants to open an editor for the message,
     # and there is no terminal here to open one in.
     rc, out = git(["-c", "core.editor=true", "cherry-pick", "--continue"], cwd=path)
@@ -1926,19 +1949,27 @@ def selftest():
             "the working tree must keep the markers so they can be edited"
 
         ok, msg = resolve_conflict("desk-1", "continue")
-        assert not ok and "still conflicted" in msg, \
+        assert not ok and "markers are still in" in msg, \
             "continuing with markers left in the file must be refused"
+        assert has_markers("desk-1", "f.txt")
 
         ok, msg = resolve_conflict("desk-1", "theirs", "f.txt")
         assert ok, msg
         assert open(os.path.join(desk, "f.txt")).read() == "desk version\n"
         assert conflict_files("desk-1") == []
+        assert not has_markers("desk-1", "f.txt")
 
+        # Now the path the UI actually takes: the file is edited in the
+        # browser and written straight to disk - nothing runs `git add`, so
+        # the index stays unmerged and only a marker scan can tell whether
+        # the user is really done. (This is "Accept both" in the hunk view.)
+        with open(os.path.join(desk, "f.txt"), "w") as f:
+            f.write("desk version\nstage version\n")
         ok, msg = resolve_conflict("desk-1", "continue")
         assert ok, msg
         assert "desk-1" not in CONFLICTS
         landed = git(["show", "stage:f.txt"], cwd=origin)[1]
-        assert landed.strip() == "desk version", landed
+        assert landed == "desk version\nstage version\n", repr(landed)
         assert git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=desk)[1].strip() == "fleet/desk-1", \
             "the desk must be back on its own branch afterwards"
         assert not desk_unpushed("desk-1"), \

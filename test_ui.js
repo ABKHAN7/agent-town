@@ -121,6 +121,44 @@ ctx.document.body.appendChild = () => { confettiSpawned++; };
 
   assert.deepStrictEqual(badToasts, [], 'the new panels raised an error toast: ' + badToasts.join(' | '));
 
+  // --- per-hunk conflict resolution (pure text logic) ---
+  const CONFLICTED = [
+    "{", "  'name': 'Theme',",
+    "<<<<<<< HEAD", "  'version': '17.0.7.0.0',",
+    "=======", "  'version': '17.0.6.10.0',",
+    ">>>>>>> ce75ca901 (New feature)",
+    "  'category': 'Website',",
+    "<<<<<<< HEAD", "  a = 1",
+    "=======", "  a = 2",
+    ">>>>>>> ce75ca901 (New feature)", "}"].join('\n');
+
+  const hs = ctx.parseConflicts(CONFLICTED);
+  assert.strictEqual(hs.length, 2, 'both conflict hunks should be found');
+  assert.strictEqual(hs[0].cur.join('\n'), "  'version': '17.0.7.0.0',");
+  assert.strictEqual(hs[0].inc.join('\n'), "  'version': '17.0.6.10.0',");
+  assert.strictEqual(hs[0].start, 2, 'hunk should report the line it starts on');
+  assert.strictEqual(ctx.parseConflicts('no markers here').length, 0);
+  // a truncated hunk must be left alone rather than half-applied
+  assert.strictEqual(ctx.parseConflicts('<<<<<<< HEAD\nonly ours\n').length, 0,
+    'an unterminated conflict must not be treated as resolvable');
+
+  const ed = get('filecontent');
+  ed.value = CONFLICTED;
+  ctx.applyHunk(0, hs[0].inc);            // accept incoming on the first hunk
+  assert.ok(ed.value.includes("'version': '17.0.6.10.0',"), 'incoming side should survive');
+  assert.ok(!ed.value.includes("'version': '17.0.7.0.0',"), 'current side should be gone');
+  assert.ok(!ed.value.includes('<<<<<<< HEAD\n  \'version\''), 'markers of hunk 1 should be gone');
+  assert.strictEqual(ctx.parseConflicts(ed.value).length, 1,
+    'resolving one hunk must leave the other one intact');
+
+  const rest = ctx.parseConflicts(ed.value);
+  ctx.applyHunk(0, rest[0].cur.concat(rest[0].inc));   // accept both
+  assert.ok(ed.value.includes('  a = 1') && ed.value.includes('  a = 2'),
+    'accept-both should keep both sides');
+  assert.strictEqual(ctx.parseConflicts(ed.value).length, 0, 'no conflicts should remain');
+  assert.ok(!/[<>=]{7}/.test(ed.value), 'no marker line may survive');
+  assert.strictEqual(get('hunks').hidden, true, 'the hunk panel hides once the file is clean');
+
   // highlightCode() - regex-based tokenizer for the file editor + diff viewer
   assert.ok(ctx.highlightCode('# a comment').includes('tok-c'), 'line comment should be tokenized');
   assert.ok(ctx.highlightCode('"a string"').includes('tok-s'), 'string should be tokenized');
@@ -130,5 +168,5 @@ ctx.document.body.appendChild = () => { confettiSpawned++; };
     'raw < must still be HTML-escaped even with no token match');
   assert.ok(!ctx.highlightCode('plain text only').includes('<span'), 'plain text needs no spans');
 
-  console.log('ui test ok — 20 polls, usage chip + conflict resolver render, build() ran only once, confetti-on-done works correctly, no UI-error toasts, highlightCode ok');
+  console.log('ui test ok — 20 polls, usage chip + conflict resolver + per-hunk accept render, build() ran only once, confetti-on-done works correctly, no UI-error toasts, highlightCode ok');
 })();
