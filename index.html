@@ -712,6 +712,11 @@ Ctrl+V pastes a screenshot/image straight in here. Ctrl+Enter to assign."></text
           <button id="bship">Push</button>
           <button id="bdiscard" class="ghost">Discard</button>
         </div>
+        <div class="assign">
+          <label class="baselabel" title="Pull requests can target any branch, including main - unlike Push, which refuses main/master on purpose">
+            🔀 PR into <select id="prbase"></select></label>
+          <button id="bpr" class="ghost">Create PR</button>
+        </div>
         <pre id="pverdict">— not reviewed yet —</pre>
         <textarea id="shipmsg" placeholder="Commit message — leave blank and Push will write one for you from what actually changed" rows="2"></textarea>
         <div class="assign" id="pcontrow">
@@ -1115,8 +1120,9 @@ function render(s){
   if(meJustDone && has) maybeLoadShipMsg(me.agent);
   const sh = s.shipper || {};
   const shBusy = BUSY.includes(sh.status);
+  const reviewedOk = has && sh.reviewed === me.agent && !shBusy;
   for(const [id, on] of [['bdiff', has], ['breview', has && !shBusy && !running],
-                         ['bship', has && sh.reviewed === me.agent && !shBusy],
+                         ['bship', reviewedOk], ['bpr', reviewedOk], ['prbase', reviewedOk],
                          ['bdiscard', has && !running],
                          ['pcontinue', has && !running], ['continuein', has && !running]])
     $(id).disabled = !on;
@@ -1200,8 +1206,8 @@ async function post(url, body, okMsg){
     const j = await r.json();
     if(!r.ok) toast(j.error || 'failed', false);
     else toast(okMsg || j.detail || 'done');
-    return r.ok;
-  }catch(e){ toast(String(e), false); return false; }
+    return r.ok ? j : false;   // truthy response body on success, so callers that need
+  }catch(e){ toast(String(e), false); return false; }   // more than ok/fail can read it
   finally{ poll(); }
 }
 // ---------- merge conflict resolver ----------
@@ -1783,6 +1789,12 @@ async function loadBaseBranches(force){
       `<option value="${n}"${n === current ? ' selected' : ''}>${n}</option>`).join('')
       || '<option value="">no branches found</option>';
     if(!list.includes(current) && b.base) sel2.value = b.base;
+    // PR target defaults to main when present - that's the whole point of
+    // offering PRs (Push refuses main/master on purpose, PR is the reviewed way in)
+    const prsel = $('prbase'), prcur = prsel.value || (list.includes('main') ? 'main' : list[0] || '');
+    prsel.innerHTML = list.map(n =>
+      `<option value="${n}"${n === prcur ? ' selected' : ''}>${n}</option>`).join('')
+      || '<option value="">no branches found</option>';
     bgWarn('basebranches', true, 'base-branch list');
   }catch(e){ bgWarn('basebranches', false, 'base-branch list'); }
 }
@@ -1833,6 +1845,15 @@ $('bship').onclick    = async () => {
   const ok = await post('/ship', {agent: sel, branches: brs, message: $('shipmsg').value.trim()},
     brs.join(' + ')+' pushed');
   if(ok){ $('shipmsg').value = ''; shipMsgTouched = false; }
+};
+$('bpr').onclick = async () => {
+  const base = $('prbase').value;
+  if(!base){ toast('choose a target branch', false); return; }
+  const msg = $('shipmsg').value.trim();
+  const title = msg.split('\n')[0] || '';
+  if(!confirm(`Open a pull request from ${selName()}'s branch into ${base}?`)) return;
+  const r = await post('/pr', {agent: sel, base, title, body: msg}, 'PR opened');
+  if(r && r.url) window.open(r.url, '_blank');
 };
 $('go').onclick  = () => assign($('who').value, $('task'));
 $('pgo').onclick = () => assign(sel, $('ptaskin'));

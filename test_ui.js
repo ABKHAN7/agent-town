@@ -65,6 +65,8 @@ let eventsResponse = {events: [
 ]};
 
 const store = {};
+let prResponse = {ok: true, url: 'https://github.com/x/y/pull/9'};
+const openedUrls = [];
 let notifPermission = 'default';
 const notificationsSpawned = [];
 class FakeNotification {
@@ -85,10 +87,11 @@ const ctx = {
     : url.startsWith('/self-git?repo=project') ? {ok: true, json: async () => selfGitProjectResponse}
     : url.startsWith('/self-git') ? {ok: true, json: async () => selfGitResponse}
     : url.startsWith('/events') ? {ok: true, json: async () => eventsResponse}
+    : url.startsWith('/pr') ? {ok: prResponse.ok, json: async () => prResponse}
     : {ok: true, json: async () => state},
   localStorage: {getItem: k => store[k] || null, setItem: (k, v) => { store[k] = v; }},
   setInterval: () => 0, setTimeout: () => 0, clearTimeout(){}, console,
-  window: {open(){}}, navigator: {mediaDevices: null, clipboard: {writeText: async () => {}}},
+  open: (url) => openedUrls.push(url), navigator: {mediaDevices: null, clipboard: {writeText: async () => {}}},
   confirm: () => false, addEventListener(){}, removeEventListener(){},
   Notification: FakeNotification,
   Date, Math, JSON, String, Object,
@@ -266,6 +269,22 @@ ctx.document.body.appendChild = () => { confettiSpawned++; };
   ctx.notifyTaskDone('Byte', true);
   assert.strictEqual(notificationsSpawned.length, 1, "already looking at the tab -> no redundant notification");
   assert.deepStrictEqual(badToasts, [], 'notifications raised an error toast: ' + badToasts.join(' | '));
+
+  // --- create-PR button (opens the returned PR URL) ---
+  ctx.pick('desk-1');
+  get('prbase').value = 'main';
+  get('shipmsg').value = 'PR title line\nmore body text';
+  const realConfirm = ctx.confirm;
+  ctx.confirm = () => true;
+  try{
+    await get('bpr').onclick();
+    assert.ok(openedUrls.includes('https://github.com/x/y/pull/9'), 'a successful PR must open its URL');
+    prResponse = {error: 'run a review on this desk first'};
+    await get('bpr').onclick();
+    assert.strictEqual(openedUrls.length, 1, 'a failed PR response must not open anything new');
+  } finally { ctx.confirm = realConfirm; }
+  assert.deepStrictEqual(badToasts.filter(t => !t.includes('review')), [],
+    'unexpected error toast from the PR button flow: ' + badToasts.join(' | '));
 
   console.log('ui test ok — 20 polls, usage chip + history + self-git panel (both repo tabs) + activity log + desktop notifications + conflict resolver + per-hunk accept render, build() ran only once, confetti-on-done works correctly, no UI-error toasts, highlightCode ok');
 })();

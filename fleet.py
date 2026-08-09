@@ -671,11 +671,30 @@ def default_commit_message(desk):
     return "%s\n\n%d file(s) changed: %s" % (subject, len(files), preview)
 
 
+def base_ref():
+    """The real, current tip of BASE - never the bare branch name.
+
+    `git reset --hard BASE` (or `worktree add ... BASE`) is ambiguous: if a
+    LOCAL branch happens to share BASE's name (very likely - it's usually
+    also what the user has checked out in their own IDE), git resolves the
+    bare name to that LOCAL branch first, not origin/BASE. A local checkout
+    that hasn't been pulled in a while silently becomes what every desk
+    resets to - discovered 2026-08-09 when a desk's worktree turned out to
+    be 498 commits behind origin/saad-dev because the shared repo's local
+    `saad-dev` branch was that stale, even though `git fetch` itself was
+    recent. Always fetch BASE fresh and resolve through origin/ explicitly.
+    Fetch failure isn't fatal - falls back to whatever origin/BASE was last
+    known to be, same as any other network hiccup in this file."""
+    git(["fetch", "origin", BASE], cwd=PROJECT)  # explicit cwd - git()'s default
+    return "origin/%s" % BASE                     # param is frozen at def-time, not live
+
+
 def ensure_worktree(name):
-    """Prepare the desk's worktree, reset to BASE. Returns (ok, message)."""
+    """Prepare the desk's worktree, reset to the current origin/BASE. Returns (ok, message)."""
     path = desk_path(name)
     branch = "fleet/%s" % name
     os.makedirs(WT, exist_ok=True)
+    ref = base_ref()
     if not os.path.isdir(os.path.join(path, ".git")) and not os.path.exists(path):
         # If the wt/ dir was ever deleted by hand (rm -rf) instead of via
         # `git worktree remove`, PROJECT's .git still thinks this branch's
@@ -683,12 +702,12 @@ def ensure_worktree(name):
         # stale registrations first so this self-heals instead of getting
         # permanently stuck on "already used by worktree".
         git(["worktree", "prune"])
-        rc, out = git(["worktree", "add", "-B", branch, path, BASE])
+        rc, out = git(["worktree", "add", "-B", branch, path, ref])
         if rc != 0:
             return False, out.strip().splitlines()[-1][:160] if out.strip() else "worktree add failed"
         return True, "worktree created"
-    # Existing worktree - if it's clean, bring it back to BASE (all local, no network)
-    rc, out = git(["reset", "--hard", BASE], cwd=path)
+    # Existing worktree - bring it back to the real current BASE
+    rc, out = git(["reset", "--hard", ref], cwd=path)
     if rc != 0:
         return False, out.strip().splitlines()[-1][:160] if out.strip() else "reset failed"
     git(["clean", "-fd"], cwd=path)
@@ -1459,9 +1478,51 @@ def push_branches(desk, sha, pending, done):
     # The cherry-picked commits get new shas on the target branches, so the
     # original one on fleet/<desk> would look un-pushed forever and the desk
     # would never be handed out again. The work is safely on the branches
-    # now, so wind the desk back to a clean base.
-    git(["reset", "--hard", BASE], cwd=path)
+    # now, so wind the desk back to a clean, current base.
+    git(["reset", "--hard", base_ref()], cwd=path)
     return True, "%s -> %s pushed" % (desk, " + ".join("origin/" + b for b in done))
+
+
+def create_pr(desk, base, title, body):
+    """Push the desk's own branch (not a cherry-pick, the real thing) to
+    origin and open a PR against `base` via `gh`. This is the only path
+    that can target main/master - ship_desk refuses those on purpose, but a
+    PR is exactly the reviewed, human-gated way to land there.
+
+    Unlike ship_desk, the desk is NOT reset afterward: the PR is a proposal,
+    not a landed change, and the branch needs to keep existing (and stay
+    updatable) until the PR is merged or closed on GitHub."""
+    path = desk_path(desk)
+    if not os.path.isdir(path):
+        return False, "this desk's worktree doesn't exist"
+    if desk in CONFLICTS:
+        return False, "this desk is paused on a merge conflict - resolve it first"
+    if not shutil.which("gh"):
+        return False, "the GitHub CLI (gh) isn't installed - install it to create PRs from here"
+    if desk_dirty(desk):
+        rc, out = git(["add", "-A"], cwd=path)
+        if rc:
+            return False, last_line(out, "git add failed")
+        rc, out = git(["commit", "-m", title], cwd=path)
+        if rc:
+            return False, last_line(out, "git commit failed")
+    rc, ahead = git(["rev-list", "--count", "origin/%s..HEAD" % base], cwd=path)
+    if rc != 0 or ahead.strip() in ("", "0"):
+        return False, "no changes on this desk to open a PR against %s" % base
+    branch = "fleet/%s" % desk
+    rc, out = git(["push", "-f", "origin", "HEAD:refs/heads/%s" % branch], cwd=path)
+    if rc:
+        return False, last_line(out, "git push failed")
+    cmd = ["gh", "pr", "create", "--base", base, "--head", branch,
+           "--title", title, "--body", body or "Opened from Agent Town."]
+    try:
+        r = subprocess.run(cmd, cwd=path, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, "gh pr create failed: %s" % e
+    if r.returncode != 0:
+        return False, last_line((r.stdout or "") + (r.stderr or ""), "gh pr create failed")
+    lines = [l for l in (r.stdout or "").strip().splitlines() if l.strip()]
+    return True, (lines[-1] if lines else "PR created")
 
 
 def resolve_conflict(desk, action, rel_path=""):
@@ -1666,7 +1727,7 @@ class Handler(BaseHTTPRequestHandler):
                 # Mid-cherry-pick on a detached HEAD - a bare reset --hard here
                 # leaves the pick half-applied and the desk off its own branch.
                 resolve_conflict(desk, "abort")
-            git(["reset", "--hard", BASE], cwd=desk_path(desk))
+            git(["reset", "--hard", base_ref()], cwd=desk_path(desk))
             git(["clean", "-fd"], cwd=desk_path(desk))
             set_(desk, **blank(desk))
             log_event("discard", desk, "work discarded, worktree reset to " + BASE)
@@ -1704,6 +1765,27 @@ class Handler(BaseHTTPRequestHandler):
                  detail=detail, output=detail)
             log_event("ship", desk, "pushed to " + ", ".join(branches) + " - " + detail)
             return self._send(200, json.dumps({"ok": True, "detail": detail}))
+
+        if path == "/pr":
+            desk = body.get("agent")
+            base = (body.get("base") or "").strip()
+            title = (body.get("title") or "").strip()
+            prbody = (body.get("body") or "").strip()
+            if desk not in DESKS:
+                return self._send(400, json.dumps({"error": "unknown desk"}))
+            if not base:
+                return self._send(400, json.dumps({"error": "choose a target branch"}))
+            if STATE[desk]["status"] in ("seated", "thinking", "working"):
+                return self._send(409, json.dumps({"error": "desk is still running"}))
+            if STATE[SHIPPER]["reviewed"] != desk:
+                return self._send(409, json.dumps({"error": "run a review on this desk first"}))
+            if not title:
+                title = default_commit_message(desk).splitlines()[0]
+            ok, detail = create_pr(desk, base, title, prbody)
+            log_event("pr" if ok else "pr_error", desk, detail, level="info" if ok else "error")
+            if not ok:
+                return self._send(409, json.dumps({"error": detail}))
+            return self._send(200, json.dumps({"ok": True, "url": detail}))
 
         if path == "/stop":
             desk = body.get("agent")
@@ -2256,10 +2338,57 @@ def selftest():
         except OSError:
             pass
 
+    # --- base_ref(): must resolve through origin/, never a same-named stale
+    # local branch. Reproduces the exact bug found 2026-08-09: a desk's
+    # worktree was 498 commits behind origin/saad-dev because PROJECT's own
+    # local `saad-dev` branch (same name as BASE) had gone stale - `git
+    # reset --hard BASE` silently resolved to that stale local branch. ---
+    tmp4 = tempfile.mkdtemp(prefix="fleet-selftest-baseref-")
+    ident = ["-c", "user.name=selftest", "-c", "user.email=selftest@local"]
+    try:
+        origin4 = os.path.join(tmp4, "origin.git")
+        assert git(["init", "--bare", "-b", "stage", origin4])[0] == 0
+        seed4 = os.path.join(tmp4, "seed")
+        assert git(["clone", origin4, seed4])[0] == 0
+        with open(os.path.join(seed4, "f.txt"), "w") as f:
+            f.write("v1\n")
+        git(["add", "-A"], cwd=seed4)
+        git(ident + ["commit", "-m", "v1"], cwd=seed4)
+        git(["push", "origin", "HEAD:stage"], cwd=seed4)
+        old_sha = git(["rev-parse", "HEAD"], cwd=seed4)[1].strip()
+
+        # stands in for PROJECT - clones stage, then never gets pulled again,
+        # exactly like a user's own local checkout drifting behind origin
+        proj4 = os.path.join(tmp4, "project")
+        assert git(["clone", "-b", "stage", origin4, proj4])[0] == 0
+
+        with open(os.path.join(seed4, "f.txt"), "w") as f:
+            f.write("v2\n")
+        git(["add", "-A"], cwd=seed4)
+        git(ident + ["commit", "-m", "v2"], cwd=seed4)
+        git(["push", "origin", "HEAD:stage"], cwd=seed4)
+        new_sha = git(["rev-parse", "HEAD"], cwd=seed4)[1].strip()
+        assert old_sha != new_sha
+
+        _real_project, _real_base3 = PROJECT, BASE
+        globals()["PROJECT"] = proj4
+        globals()["BASE"] = "stage"
+        try:
+            assert git(["rev-parse", "stage"], cwd=proj4)[1].strip() == old_sha, \
+                "proj4's local stage branch must still be the stale one, or this test proves nothing"
+            ref = base_ref()
+            assert ref == "origin/stage"
+            resolved = git(["rev-parse", ref], cwd=proj4)[1].strip()
+            assert resolved == new_sha, \
+                "base_ref() must resolve to the fresh origin/BASE, not a stale same-named local branch"
+        finally:
+            globals()["PROJECT"], globals()["BASE"] = _real_project, _real_base3
+    finally:
+        shutil.rmtree(tmp4, ignore_errors=True)
+
     # --- conflict resolver, end to end against a throwaway repo ---
     # This one is worth the setup cost: a resolver that pushes a file with
     # conflict markers still in it is worse than no resolver at all.
-    import tempfile
     tmp = tempfile.mkdtemp(prefix="fleet-selftest-")
     _real_wt, _real_base = WT, BASE
     globals()["WT"] = os.path.join(tmp, "wt")
@@ -2350,6 +2479,77 @@ def selftest():
         globals()["CONFLICTS_FILE"] = _real_cfile
         CONFLICTS.pop("desk-1", None)
         shutil.rmtree(tmp, ignore_errors=True)
+
+    # --- create_pr(): isolated temp repo, "gh" mocked (never touches the
+    # real GitHub) so the push+gh-call sequencing is verified without a
+    # network call or real gh auth. ---
+    tmp3 = tempfile.mkdtemp(prefix="fleet-selftest-pr-")
+    _real_wt2, _real_base2 = WT, BASE
+    globals()["WT"] = os.path.join(tmp3, "wt")
+    globals()["BASE"] = "main"
+    os.makedirs(WT)
+    ident = ["-c", "user.name=selftest", "-c", "user.email=selftest@local"]
+    try:
+        origin3 = os.path.join(tmp3, "origin.git")
+        assert git(["init", "--bare", "-b", "main", origin3])[0] == 0
+        seed3 = os.path.join(tmp3, "seed")
+        assert git(["clone", origin3, seed3])[0] == 0
+        with open(os.path.join(seed3, "f.txt"), "w") as f:
+            f.write("base\n")
+        git(["add", "-A"], cwd=seed3)
+        git(ident + ["commit", "-m", "base"], cwd=seed3)
+        git(["push", "origin", "HEAD:main"], cwd=seed3)
+
+        desk3 = os.path.join(WT, "desk-1")
+        assert git(["clone", "-b", "main", origin3, desk3])[0] == 0
+        git(["checkout", "-b", "fleet/desk-1"], cwd=desk3)
+        with open(os.path.join(desk3, "f.txt"), "w") as f:
+            f.write("desk change\n")
+        git(["add", "-A"], cwd=desk3)
+        git(ident + ["commit", "-m", "desk change"], cwd=desk3)
+
+        # a second, untouched desk - never diverged from base
+        desk3b = os.path.join(WT, "desk-2")
+        assert git(["clone", "-b", "main", origin3, desk3b])[0] == 0
+        git(["checkout", "-b", "fleet/desk-2"], cwd=desk3b)
+
+        _real_run2 = subprocess.run
+        def _fake_gh(cmd, *a, **k):
+            if cmd and cmd[0] == "gh":
+                class R:
+                    returncode = 0
+                    stdout = "https://github.com/x/y/pull/1\n"
+                    stderr = ""
+                return R()
+            return _real_run2(cmd, *a, **k)
+        subprocess.run = _fake_gh
+        try:
+            ok, detail = create_pr("desk-1", "main", "Test PR", "body text")
+            assert ok and detail == "https://github.com/x/y/pull/1", detail
+            # the branch must actually be pushed to origin - that's what gh diffs against
+            rc, out = git(["ls-remote", "--heads", origin3, "fleet/desk-1"])
+            assert rc == 0 and "fleet/desk-1" in out, "gh pr create needs the branch to exist on origin"
+
+            ok2, detail2 = create_pr("desk-2", "main", "Empty PR", "")
+            assert not ok2 and "no changes" in detail2, \
+                "a desk with nothing ahead of base must be refused before ever calling gh"
+
+            ok3, detail3 = create_pr("desk-does-not-exist", "main", "x", "")
+            assert not ok3 and "doesn't exist" in detail3
+        finally:
+            subprocess.run = _real_run2
+
+        # gh missing -> a clear, actionable error, and no push attempted first
+        _real_which = shutil.which
+        shutil.which = lambda name: None if name == "gh" else _real_which(name)
+        try:
+            ok4, detail4 = create_pr("desk-1", "main", "x", "")
+            assert not ok4 and "gh" in detail4.lower() and "install" in detail4.lower(), detail4
+        finally:
+            shutil.which = _real_which
+    finally:
+        globals()["WT"], globals()["BASE"] = _real_wt2, _real_base2
+        shutil.rmtree(tmp3, ignore_errors=True)
 
     # --- self-git: an isolated temp repo + temp bare "origin" stand in for
     # HERE, so this exercises real git add/commit/push/pull without ever
