@@ -87,12 +87,13 @@ const ctx = {
     : url.startsWith('/self-git?repo=project') ? {ok: true, json: async () => selfGitProjectResponse}
     : url.startsWith('/self-git') ? {ok: true, json: async () => selfGitResponse}
     : url.startsWith('/events') ? {ok: true, json: async () => eventsResponse}
+    : url.startsWith('/project-pr') ? {ok: true, json: async () => ({ok: true, url: 'https://github.com/x/y/pull/11'})}
     : url.startsWith('/pr') ? {ok: prResponse.ok, json: async () => prResponse}
     : {ok: true, json: async () => state},
   localStorage: {getItem: k => store[k] || null, setItem: (k, v) => { store[k] = v; }},
   setInterval: () => 0, setTimeout: () => 0, clearTimeout(){}, console,
   open: (url) => openedUrls.push(url), navigator: {mediaDevices: null, clipboard: {writeText: async () => {}}},
-  confirm: () => false, addEventListener(){}, removeEventListener(){},
+  confirm: () => false, prompt: () => '', addEventListener(){}, removeEventListener(){},
   Notification: FakeNotification,
   Date, Math, JSON, String, Object,
 };
@@ -285,6 +286,30 @@ ctx.document.body.appendChild = () => { confettiSpawned++; };
   } finally { ctx.confirm = realConfirm; }
   assert.deepStrictEqual(badToasts.filter(t => !t.includes('review')), [],
     'unexpected error toast from the PR button flow: ' + badToasts.join(' | '));
+
+  // --- Project tab: branch-to-branch PR (e.g. saad-dev -> stage), no desk/worktree involved ---
+  ctx.switchSelfGitRepo('project');
+  await new Promise(r => setImmediate(r));
+  assert.ok(get('pprsource').innerHTML.includes('saad-dev') && get('pprtarget').innerHTML.includes('stage'));
+  get('pprsource').value = 'saad-dev'; get('pprtarget').value = 'stage';
+  ctx.confirm = () => true;
+  try{ await get('bpprcreate').onclick(); } finally { ctx.confirm = realConfirm; }
+  assert.ok(openedUrls.includes('https://github.com/x/y/pull/11'), 'a successful project PR must open its URL');
+  ctx.switchSelfGitRepo('self');
+
+  // --- post-Push follow-up PR prompt (one confirm click, no separate manual step) ---
+  const urlsBeforePrompt = openedUrls.length;
+  ctx.confirm = () => true;
+  try{ await ctx.offerFollowupPR('saad-dev'); } finally { ctx.confirm = realConfirm; }
+  assert.strictEqual(openedUrls.length, urlsBeforePrompt + 1,
+    'a known branch (saad-dev -> stage) must not need a prompt() at all');
+  assert.strictEqual(openedUrls[openedUrls.length - 1], 'https://github.com/x/y/pull/11');
+  const badToastsBeforeDecline = badToasts.length;
+  ctx.confirm = () => false;
+  await ctx.offerFollowupPR('saad-dev');
+  assert.strictEqual(openedUrls.length, urlsBeforePrompt + 1, 'declining the follow-up prompt must not open a PR');
+  assert.strictEqual(badToasts.length, badToastsBeforeDecline, 'the follow-up PR prompt raised an unexpected error toast');
+  ctx.confirm = realConfirm;
 
   console.log('ui test ok — 20 polls, usage chip + history + self-git panel (both repo tabs) + activity log + desktop notifications + conflict resolver + per-hunk accept render, build() ran only once, confetti-on-done works correctly, no UI-error toasts, highlightCode ok');
 })();

@@ -316,6 +316,10 @@ MODEL_IDS = {
     "sonnet": "claude-sonnet-5",
     "opus": "claude-opus-5",
 }
+# Thinking-budget knob, independent of model choice - "low" is the cheap/fast
+# end (fewer tokens spent reasoning before acting), matching MODEL_IDS' order
+# from cheap to expensive. Passed straight through to `claude -p --effort`.
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 # One fixed shipper. It only reads and gives an opinion - push is done by
 # Python; no agent has a commit/push tool.
 SHIPPER = "shipper"
@@ -394,7 +398,7 @@ INHIBIT = ["systemd-inhibit", "--what=sleep:idle", "--who=Agent Town",
 def blank(name):
     return {"agent": name, "name": NAMES.get(name, name), "urgent": name in URGENT,
             "status": "empty", "tool": "", "detail": "", "task": "", "ttype": "",
-            "domain": "", "model": "", "ai_urgent": False,
+            "domain": "", "model": "", "effort": "", "ai_urgent": False,
             "turns": 0, "cost": 0.0, "report": None, "started": 0.0,
             "log": [], "output": "", "branch": "fleet/%s" % name, "changed": 0,
             "tokens": {k: 0 for k in TOKEN_KEYS}}
@@ -739,29 +743,46 @@ def handle_event(ev):
     return None
 
 
-def run_agent(name, ttype, task, module="", domain="", attachments=None, resume=False):
+def pick_model(model, urgent):
+    """Manual choice always wins; Urgent Room defaults to sonnet+urgent when
+    nothing was chosen; anything else returns (None, False) to signal "go
+    run AI triage instead". Pure decision logic, pulled out of run_agent so
+    the priority order is testable without spawning a subprocess."""
+    if model:
+        return model, False
+    if urgent:
+        return "sonnet", True
+    return None, False
+
+
+def run_agent(name, ttype, task, module="", domain="", attachments=None, resume=False,
+              model="", effort=""):
     """resume=True: the worktree is NOT reset - previous work is preserved,
     the new requirement is added on top of it (in case the user missed
     something).
 
-    Model and urgency are decided by AI itself (triage_task) - only the
-    Urgent Room and resume calls skip this (need to stay fast / model is
-    already fixed)."""
+    model/effort: an explicit user choice from the dashboard, taking
+    priority over everything else (including the Urgent Room's hardcoded
+    sonnet and AI triage) - picking a cheaper model/lower effort is the
+    user's call to make, and it also skips the triage call itself, which
+    is one less (small, but real) round of tokens spent. Leave both empty
+    for the previous automatic behavior."""
     ts = time.strftime("%Y%m%d-%H%M%S")
     urgent = name in URGENT
     if resume:
         prompt = RESUME_PROMPT.format(task=task.strip()) + attachment_note(attachments)
         tools, agent_flag = WRITE_TOOLS, None
         display_task = (STATE[name]["task"] or "") + "\n+ " + task.strip()
-        model_key, ai_urgent = STATE[name].get("model") or "sonnet", STATE[name].get("ai_urgent", False)
+        model_key = model or STATE[name].get("model") or "sonnet"
+        ai_urgent = STATE[name].get("ai_urgent", False)
+        effort = effort or STATE[name].get("effort") or ""
     else:
         spec = TASK_TYPES[ttype]
         prompt = build_prompt(ttype, task, module, domain, attachments)
         tools, agent_flag = spec["tools"], spec["agent"]
         display_task = task
-        if urgent:
-            model_key, ai_urgent = "sonnet", True
-        else:
+        model_key, ai_urgent = pick_model(model, urgent)
+        if model_key is None:
             set_(name, status="seated", task=display_task, ttype=ttype, domain=domain,
                  tool="", detail="deciding on AI model and urgency…",
                  turns=0, cost=0.0, tokens={k: 0 for k in TOKEN_KEYS},
@@ -770,11 +791,12 @@ def run_agent(name, ttype, task, module="", domain="", attachments=None, resume=
             model_key, ai_urgent = triage_task(ttype, task, domain)
 
     set_(name, status="seated", task=display_task, ttype=ttype, domain=domain,
-         model=model_key, urgent=urgent, ai_urgent=ai_urgent,
+         model=model_key, effort=effort, urgent=urgent, ai_urgent=ai_urgent,
          tool="", detail="preparing worktree", turns=0, cost=0.0, report=None,
          tokens={k: 0 for k in TOKEN_KEYS},
          started=time.time(), log=[], output="", changed=0)
-    log_event("task_start", name, "%s: %s" % (ttype, display_task[:100]))
+    log_event("task_start", name, "%s: %s (model=%s%s)" % (
+        ttype, display_task[:100], model_key, ", effort=" + effort if effort else ""))
 
     if not resume:
         ok, msg = ensure_worktree(name)
@@ -789,6 +811,8 @@ def run_agent(name, ttype, task, module="", domain="", attachments=None, resume=
         cmd = cmd[:5] + ["--agent", agent_flag] + cmd[5:]
     if attachments:
         cmd += ["--add-dir", UPLOADS]  # uploads live outside the worktree, path must be given explicitly
+    if effort in EFFORT_LEVELS:
+        cmd += ["--effort", effort]
     if shutil.which("systemd-inhibit"):
         cmd = INHIBIT + cmd
     try:
@@ -1525,6 +1549,34 @@ def create_pr(desk, base, title, body):
     return True, (lines[-1] if lines else "PR created")
 
 
+def create_project_pr(source, target, title, body):
+    """Open a PR between two branches that already exist on origin - e.g.
+    saad-dev -> stage, after work already landed on saad-dev through the
+    normal Push flow. Unlike create_pr() above, this never touches the
+    user's own checkout at all (no reset, no commit, no branch switch) -
+    just `gh pr create` comparing two refs GitHub already has. That's why
+    it's safe to offer from the read-only Project tab."""
+    if not shutil.which("gh"):
+        return False, "the GitHub CLI (gh) isn't installed - install it to create PRs from here"
+    branches = list_all_branches()
+    if source not in branches:
+        return False, "%s doesn't exist on origin" % source
+    if target not in branches:
+        return False, "%s doesn't exist on origin" % target
+    if source == target:
+        return False, "source and target can't be the same branch"
+    cmd = ["gh", "pr", "create", "--base", target, "--head", source,
+           "--title", title, "--body", body or "Opened from Agent Town."]
+    try:
+        r = subprocess.run(cmd, cwd=PROJECT, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, "gh pr create failed: %s" % e
+    if r.returncode != 0:
+        return False, last_line((r.stdout or "") + (r.stderr or ""), "gh pr create failed")
+    lines = [l for l in (r.stdout or "").strip().splitlines() if l.strip()]
+    return True, (lines[-1] if lines else "PR created")
+
+
 def resolve_conflict(desk, action, rel_path=""):
     """Drive a paused cherry-pick from the UI.
 
@@ -1787,6 +1839,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(409, json.dumps({"error": detail}))
             return self._send(200, json.dumps({"ok": True, "url": detail}))
 
+        if path == "/project-pr":
+            source = (body.get("source") or "").strip()
+            target = (body.get("target") or "").strip()
+            title = (body.get("title") or "").strip()
+            prbody = (body.get("body") or "").strip()
+            if not source or not target:
+                return self._send(400, json.dumps({"error": "choose both branches"}))
+            if not title:
+                title = "%s -> %s" % (source, target)
+            ok, detail = create_project_pr(source, target, title, prbody)
+            log_event("project_pr" if ok else "project_pr_error", None, detail,
+                      level="info" if ok else "error")
+            if not ok:
+                return self._send(409, json.dumps({"error": detail}))
+            return self._send(200, json.dumps({"ok": True, "url": detail}))
+
         if path == "/stop":
             desk = body.get("agent")
             if desk not in STATE:
@@ -1803,10 +1871,16 @@ class Handler(BaseHTTPRequestHandler):
             desk = body.get("agent")
             task = (body.get("task") or "").strip()
             attachments = body.get("attachments") or []
+            model = (body.get("model") or "").strip()
+            effort = (body.get("effort") or "").strip()
             if desk not in DESKS:
                 return self._send(400, json.dumps({"error": "unknown desk"}))
             if not task:
                 return self._send(400, json.dumps({"error": "write the new requirement"}))
+            if model and model not in MODEL_IDS:
+                return self._send(400, json.dumps({"error": "unknown model"}))
+            if effort and effort not in EFFORT_LEVELS:
+                return self._send(400, json.dumps({"error": "unknown effort level"}))
             if STATE[desk]["status"] in ("seated", "thinking", "working"):
                 return self._send(409, json.dumps({"error": "desk is busy right now"}))
             if not desk_dirty(desk) and not desk_unpushed(desk):
@@ -1814,7 +1888,8 @@ class Handler(BaseHTTPRequestHandler):
                     {"error": "no work on this desk to continue"}))
             threading.Thread(target=run_agent,
                               args=(desk, STATE[desk]["ttype"] or "change", task),
-                              kwargs={"attachments": attachments, "resume": True},
+                              kwargs={"attachments": attachments, "resume": True,
+                                      "model": model, "effort": effort},
                               daemon=True).start()
             return self._send(200, json.dumps({"ok": True}))
 
@@ -1932,11 +2007,17 @@ class Handler(BaseHTTPRequestHandler):
         domain = (body.get("domain") or "").strip()
         attachments = body.get("attachments") or []
         urgent = bool(body.get("urgent"))
+        model = (body.get("model") or "").strip()
+        effort = (body.get("effort") or "").strip()
         desk = body.get("agent") or free_desk(urgent=urgent)
         if ttype not in TASK_TYPES:
             return self._send(400, json.dumps({"error": "unknown task type"}))
         if not task:
             return self._send(400, json.dumps({"error": "task is empty"}))
+        if model and model not in MODEL_IDS:
+            return self._send(400, json.dumps({"error": "unknown model"}))
+        if effort and effort not in EFFORT_LEVELS:
+            return self._send(400, json.dumps({"error": "unknown effort level"}))
         if ttype not in MODULE_OPTIONAL_TYPES:
             if not module:
                 return self._send(400, json.dumps(
@@ -1958,7 +2039,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(409, json.dumps(
                 {"error": "%s still has unreviewed work - merge or discard it first" % desk}))
         threading.Thread(target=run_agent, args=(desk, ttype, task),
-                          kwargs={"module": module, "domain": domain, "attachments": attachments},
+                          kwargs={"module": module, "domain": domain, "attachments": attachments,
+                                  "model": model, "effort": effort},
                           daemon=True).start()
         return self._send(200, json.dumps({"ok": True, "desk": desk}))
 
@@ -2090,6 +2172,15 @@ def selftest():
         assert model == "sonnet" and urgent_flag is False
     finally:
         subprocess.run = _real_run
+
+    # --- pick_model(): manual choice beats Urgent Room's hardcode, both
+    # beat "go run triage" (signaled by None) ---
+    assert pick_model("haiku", False) == ("haiku", False)
+    assert pick_model("haiku", True) == ("haiku", False), \
+        "a manual model must override the Urgent Room default too"
+    assert pick_model("", True) == ("sonnet", True)
+    assert pick_model("", False) == (None, False), "nothing chosen -> caller must run triage"
+    assert "low" in EFFORT_LEVELS and "max" in EFFORT_LEVELS
 
     # --- uploads ---
     import base64 as _b64
@@ -2550,6 +2641,32 @@ def selftest():
     finally:
         globals()["WT"], globals()["BASE"] = _real_wt2, _real_base2
         shutil.rmtree(tmp3, ignore_errors=True)
+
+    # --- create_project_pr(): branch-to-branch PR (e.g. saad-dev -> stage),
+    # no worktree/checkout involved at all - just branch-name validation
+    # against the real (read-only) branch list, plus a mocked `gh`. ---
+    real_branches = list_all_branches()
+    if len(real_branches) >= 2:
+        b1, b2 = real_branches[0], real_branches[1]
+        _real_run3 = subprocess.run
+        def _fake_gh2(cmd, *a, **k):
+            if cmd and cmd[0] == "gh":
+                class R:
+                    returncode = 0
+                    stdout = "https://github.com/x/y/pull/2\n"
+                    stderr = ""
+                return R()
+            return _real_run3(cmd, *a, **k)
+        subprocess.run = _fake_gh2
+        try:
+            ok, detail = create_project_pr(b1, b2, "test", "")
+            assert ok and detail == "https://github.com/x/y/pull/2", detail
+        finally:
+            subprocess.run = _real_run3
+    ok, detail = create_project_pr("branch-does-not-exist-xyz", "main", "t", "")
+    assert not ok and "doesn't exist" in detail
+    ok, detail = create_project_pr("main", "main", "t", "")
+    assert not ok and "same branch" in detail
 
     # --- self-git: an isolated temp repo + temp bare "origin" stand in for
     # HERE, so this exercises real git add/commit/push/pull without ever

@@ -603,6 +603,20 @@ input:focus,select:focus{outline:none;border-color:var(--accent);
       </datalist>
       <label class="brx" id="urgentwrap" title="Goes to the separate Urgent Room, fast model, skips AI triage">
         <input type="checkbox" id="urgent"> 🚨 Urgent</label>
+      <select id="pickmodel" title="Model — leave on Auto for AI-triage (haiku/sonnet/opus, picked per task). Choosing one here skips that triage call too.">
+        <option value="">🧠 Auto</option>
+        <option value="haiku">🧠 Haiku (cheapest/fastest)</option>
+        <option value="sonnet">🧠 Sonnet</option>
+        <option value="opus">🧠 Opus (most capable)</option>
+      </select>
+      <select id="pickeffort" title="Thinking effort — lower uses fewer tokens on reasoning before acting. Leave on Auto for the CLI's own default.">
+        <option value="">⚙️ Auto</option>
+        <option value="low">⚙️ Low</option>
+        <option value="medium">⚙️ Medium</option>
+        <option value="high">⚙️ High</option>
+        <option value="xhigh">⚙️ Very high</option>
+        <option value="max">⚙️ Max</option>
+      </select>
       <select id="who"></select>
     </div>
     <div class="barrow bartask">
@@ -641,6 +655,7 @@ Ctrl+V pastes a screenshot/image straight in here. Ctrl+Enter to assign."></text
     <div id="phead"><span class="who" id="pwho">—</span><button id="prename" class="ghost" style="padding:3px 8px;font-size:11px" title="Rename">✏️</button><span class="pill" id="ppill">empty</span>
       <button id="pstop" class="ghost" style="padding:5px 12px;font-size:11px" hidden>🛑 Stop</button>
       <span id="pmodel" class="tagchip" hidden></span>
+      <span id="peffort" class="tagchip" hidden></span>
       <span id="pdomain" class="tagchip" hidden></span>
       <span id="paiurgent" class="tagchip urgent" hidden>🚨 AI flagged this as urgent</span>
       <span id="pmeta"></span></div>
@@ -784,6 +799,13 @@ Ctrl+V pastes a screenshot/image straight in here. Ctrl+Enter to assign."></text
     <div id="sgbranches" hidden>
       <h4>Branches</h4>
       <div id="sgbranchlist" class="filelist" style="max-height:140px"></div>
+      <h4>Open a PR between two pushed branches</h4>
+      <div class="assign">
+        <select id="pprsource"></select>
+        <span class="hint">into</span>
+        <select id="pprtarget"></select>
+        <button type="button" id="bpprcreate" class="ghost">Create PR</button>
+      </div>
     </div>
     <div id="sgpushrow">
       <textarea id="sgmsg" placeholder="Commit message — leave blank for an auto-generated one" rows="2"></textarea>
@@ -1088,6 +1110,8 @@ function render(s){
     + "It just shows what this would cost at API rates, i.e. how much of your plan limit it used.";
   $('pmodel').hidden = !me.model;
   $('pmodel').textContent = '🧠 ' + (me.model || '');
+  $('peffort').hidden = !me.effort;
+  $('peffort').textContent = '⚙️ ' + (me.effort || '');
   $('pdomain').hidden = !me.domain;
   $('pdomain').textContent = '📂 ' + (me.domain || '');
   $('paiurgent').hidden = !(me.ai_urgent && !me.urgent);
@@ -1183,7 +1207,8 @@ async function assign(agent, input){
     const r = await fetch('/run',{method:'POST',headers:{'Content-Type':'application/json'},
       body: JSON.stringify({agent: agent || null, task: input.value, type: $('ttype').value,
                             module: $('module').value, domain: $('domain').value,
-                            urgent: $('urgent').checked, attachments})});
+                            urgent: $('urgent').checked, attachments,
+                            model: $('pickmodel').value, effort: $('pickeffort').value})});
     const j = await r.json();
     if(!r.ok) toast(j.error || 'assign failed', false);
     else {
@@ -1615,8 +1640,16 @@ function renderSelfGitPanel(g, repo){
     $('sgbranchlist').innerHTML = branches.length
       ? branches.map(b => `<div class="fnode">${escHtml(b)}</div>`).join('')
       : '<div class="fempty">— no branches found —</div>';
+    const opts = branches.map(b => `<option value="${escHtml(b)}">${escHtml(b)}</option>`).join('');
+    const srcCur = $('pprsource').value, tgtCur = $('pprtarget').value;
+    $('pprsource').innerHTML = opts;
+    $('pprtarget').innerHTML = opts;
+    if(branches.includes(srcCur)) $('pprsource').value = srcCur; else if(branches.includes(g.branch)) $('pprsource').value = g.branch;
+    if(branches.includes(tgtCur)) $('pprtarget').value = tgtCur; else if(branches.includes('stage')) $('pprtarget').value = 'stage';
+    $('bpprcreate').disabled = branches.length < 2;
     $('sgnote').textContent = "Read-only — the dashboard never commits, pushes, or switches branches on your "
-      + "Project checkout, same as it never touches a desk's base branch. Use your terminal or IDE for that.";
+      + "Project checkout, same as it never touches a desk's base branch. Opening a PR between two branches "
+      + "that are already pushed doesn't touch your checkout either, so that's offered here too.";
   }else{
     $('sgpush').disabled = !dirty.length && !g.ahead;
     $('sgpush').textContent = dirty.length ? '⬆ Commit + Push' : '⬆ Push';
@@ -1666,6 +1699,17 @@ $('sgpush').onclick = async () => {
 $('sgpull').onclick = async () => {
   const ok = await post('/self-git/pull', {}, 'Pulled — restart the server to run the new code');
   if(ok) loadRepoGit('self', true);
+};
+async function doProjectPR(source, target){
+  const r = await post('/project-pr', {source, target}, 'PR opened');
+  if(r && r.url) window.open(r.url, '_blank');
+}
+$('bpprcreate').onclick = async () => {
+  const source = $('pprsource').value, target = $('pprtarget').value;
+  if(!source || !target){ toast('choose both branches', false); return; }
+  if(source === target){ toast("source and target can't be the same", false); return; }
+  if(!confirm(`Open a pull request from ${source} into ${target}?`)) return;
+  await doProjectPR(source, target);
 };
 loadRepoGit('self', false);
 setInterval(() => loadRepoGit('self', false), 15000);   // cheap chip refresh, no fetch/network round-trip
@@ -1838,14 +1882,27 @@ function maybeLoadShipMsg(desk){
     if(!shipMsgTouched && !$('shipmsg').value) $('shipmsg').value = d.message || '';
   }).catch(() => {});
 }
+// Rastgar's usual promotion order - just a starting suggestion for the
+// post-push PR prompt below, not a rule enforced anywhere.
+const NEXT_BRANCH = {'saad-dev': 'stage', 'stage': 'main'};
 $('bship').onclick    = async () => {
   const brs = targets();
   if(!brs.length){ toast('no branch selected', false); return; }
   if(!confirm(`${selName()}'s work will be pushed to:\n\n  ${brs.join('\n  ')}\n\nAre you sure?`)) return;
   const ok = await post('/ship', {agent: sel, branches: brs, message: $('shipmsg').value.trim()},
     brs.join(' + ')+' pushed');
-  if(ok){ $('shipmsg').value = ''; shipMsgTouched = false; }
+  if(ok){
+    $('shipmsg').value = ''; shipMsgTouched = false;
+    if(brs.length === 1) offerFollowupPR(brs[0]);
+  }
 };
+async function offerFollowupPR(source){
+  const guess = NEXT_BRANCH[source] || '';
+  if(!confirm(`Pushed to ${source}. Create a pull request from ${source} into ${guess || 'another branch'}?`)) return;
+  const target = guess || (prompt('Target branch for the PR:') || '').trim();
+  if(!target){ if(!guess) toast('no target branch given', false); return; }
+  await doProjectPR(source, target);
+}
 $('bpr').onclick = async () => {
   const base = $('prbase').value;
   if(!base){ toast('choose a target branch', false); return; }
@@ -1866,7 +1923,8 @@ $('pstop').onclick = () => confirm(selName() + "'s running work will be stopped.
 $('pcontinue').onclick = () => {
   const v = $('continuein').value.trim();
   if(!v){ toast('write the new requirement', false); return; }
-  post('/continue', {agent: sel, task: v, attachments}, selName() + ' got the new requirement');
+  post('/continue', {agent: sel, task: v, attachments,
+    model: $('pickmodel').value, effort: $('pickeffort').value}, selName() + ' got the new requirement');
   $('continuein').value = ''; attachments = []; renderAttachments();
 };
 $('continuein').onkeydown = e => { if(e.key === 'Enter') $('pcontinue').click(); };
